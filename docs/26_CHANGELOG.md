@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 — CI: build shared before typecheck
+
+- The GitHub Actions workflow now runs "npm run build -w @projectpack/shared"
+  right after npm ci. The api and web workspaces typecheck against the shared
+  package's compiled dist/, which previously did not exist on a fresh CI
+  runner — causing the "Cannot find module '@projectpack/shared'" cascade
+  (84 phantom errors). Render deployments were never affected (their build
+  command already builds shared first).
+
 ## 0.5.2 — CI fix
 
 - python/file_engine/requirements.txt now includes pytest — GitHub Actions

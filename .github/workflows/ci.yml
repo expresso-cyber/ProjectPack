@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
+      # the api/web workspaces typecheck against @projectpack/shared's
+      # compiled dist/ — it must be built before any typecheck or test runs
+      - run: npm run build -w @projectpack/shared
       - run: npm run install:python
       - run: npm run typecheck
       - run: npm run test:python
