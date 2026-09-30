@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.0 — Memory-safe crawler, faster imports, re-import refresh
+
+- **Fixed: free-tier instance restarts (out of memory).** The crawler used to
+  buffer every downloaded file in memory (6 workers × up to 50 MB each) and the
+  scan/extract phases spawned up to 4 Python processes regardless of host size.
+  Downloads are now streamed to disk with the hash computed on the fly, and the
+  engine concurrency defaults to 2 (tune with EXTRACT_CONCURRENCY /
+  HASH_CONCURRENCY). Extraction of large sites no longer OOM-kills the service.
+- **Fixed: endless 404 console flood.** When the API restarted mid-import the
+  UI polled a job that no longer existed, forever. Polling now stops on 404 and
+  shows a clear "the server restarted, import again" message.
+- **Fixed: "project not found" when deleting a project that a restart wiped.**
+  The UI now explains it and refreshes the workspace list.
+- **Hash while downloading** — the crawl hashes each file as it streams, and
+  the scan phase reuses those hashes instead of re-reading every file.
+- **Keep-alive connections** — one pooled agent reused across the crawl.
+- **Skip heavy media** — new "skip video/audio" toggle on the website import
+  form (much smaller, much faster import); skipped files are reported.
+- **Re-import refreshes the existing project** — a second import of the same
+  site updates that project (HTTP 304 skips unchanged files, extracted content
+  is preserved, previously failed assets are retried) instead of creating a
+  duplicate project.
+- **Live counters** — progress shows "N pages · M assets · X MB" while
+  crawling and "Indexing files — n/m" while scanning (new job `detail` field).
+
 ## 0.5.3 — CI: build shared before typecheck
 
 - The GitHub Actions workflow now runs "npm run build -w @projectpack/shared"

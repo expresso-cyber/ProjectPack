@@ -16,6 +16,7 @@ export default function Home() {
   const [githubUrl, setGithubUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [websiteName, setWebsiteName] = useState('');
+  const [skipMedia, setSkipMedia] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importProjectId, setImportProjectId] = useState('');
@@ -47,33 +48,58 @@ export default function Home() {
     }
   }
 
-  const importJob = useJobProgress(importJobId, (job: JobRecord) => {
-    if (job.status === 'completed') {
-      const failedCount = ((job.result as { failures?: unknown[] } | null)?.failures ?? []).length;
-      if (importKind === 'website' && failedCount > 0) {
-        notify(
-          'info',
-          `Import complete — ${failedCount} file${failedCount === 1 ? '' : 's'} could not be downloaded`,
-          'The site may be rate-limiting some assets — re-importing usually recovers them.',
-        );
-      } else {
-        notify(
-          'success',
-          importKind === 'website' ? 'Website import complete' : 'Repository import complete',
-          'Opening the project…',
-        );
+  const importJob = useJobProgress(
+    importJobId,
+    (job: JobRecord) => {
+      if (job.status === 'completed') {
+        const result = (job.result ?? {}) as { failures?: unknown[]; reused?: boolean };
+        const failedCount = (result.failures ?? []).length;
+        if (result.reused) {
+          notify(
+            'success',
+            'Existing project refreshed',
+            'Unchanged files were skipped — only what changed was re-fetched.',
+          );
+        } else if (importKind === 'website' && failedCount > 0) {
+          notify(
+            'info',
+            `Import complete — ${failedCount} file${failedCount === 1 ? '' : 's'} could not be downloaded`,
+            'The site may be rate-limiting some assets — re-importing usually recovers them.',
+          );
+        } else {
+          notify(
+            'success',
+            importKind === 'website' ? 'Website import complete' : 'Repository import complete',
+            'Opening the project…',
+          );
+        }
+        // brief pause so the toast is visible before navigating
+        setTimeout(() => {
+          window.location.href = `/projects/${importProjectId}`;
+        }, 700);
+        return;
       }
-      // brief pause so the toast is visible before navigating
-      setTimeout(() => {
-        window.location.href = `/projects/${importProjectId}`;
-      }, 700);
-      return;
-    }
-    // failed — surface the error and stop
-    setError(job.error ?? 'Import failed');
-    notify('error', 'Import failed', job.error ?? undefined);
-    setImportJobId(null);
-  });
+      // failed — a transient toast plus the browser console (no persistent banner)
+      console.error('[ProjectPack] Import failed:', job.error);
+      notify('error', 'Import failed', job.error ?? undefined);
+      setImportJobId(null);
+      setBusy(false);
+    },
+    400,
+    () => {
+      // The job vanished (API restarted / free instance recycled). Stop the bar
+      // and say so plainly instead of polling a dead job forever.
+      console.warn('[ProjectPack] Import job was lost (server restarted).');
+      notify(
+        'error',
+        'Import interrupted',
+        'The server restarted and lost the job. Nothing is broken — import the site again.',
+      );
+      setImportJobId(null);
+      setBusy(false);
+      void api.listProjects().then(setProjects).catch(() => undefined);
+    },
+  );
 
   async function createProject() {
     setBusy(true);
@@ -113,6 +139,7 @@ export default function Home() {
       const { projectId, jobId } = await api.analyzeWebsite(
         websiteUrl,
         websiteName.trim() || undefined,
+        skipMedia,
       );
       setImportKind('website');
       setImportProjectId(projectId);
@@ -226,6 +253,16 @@ export default function Home() {
             onChange={(e) => setWebsiteName(e.target.value)}
             disabled={importing}
           />
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
+            <input
+              type="checkbox"
+              checked={skipMedia}
+              onChange={(e) => setSkipMedia(e.target.checked)}
+              disabled={importing}
+              className="h-4 w-4"
+            />
+            Skip video/audio files — much faster, much smaller import
+          </label>
           <button
             className="mt-3 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
             disabled={busy || importing}
@@ -247,7 +284,7 @@ export default function Home() {
             value={importJob?.progress ?? 4}
             label={
               importKind === 'website'
-                ? 'Crawling & scanning website'
+                ? `Crawling & scanning website${importJob?.detail ? ` — ${importJob.detail}` : ''}`
                 : `Downloading & scanning repository — ${importJob?.completed ?? 0}/${importJob?.total || 3} steps`
             }
           />

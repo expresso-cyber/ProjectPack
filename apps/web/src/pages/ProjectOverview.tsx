@@ -67,6 +67,17 @@ export default function ProjectOverview() {
     return () => clearInterval(timer);
   }, [scanning, refresh]);
 
+  const onJobLost = () => {
+    console.warn('[ProjectPack] Job was lost (server restarted).');
+    notify(
+      'error',
+      'Job interrupted',
+      'The server restarted and lost this job. Nothing is broken — run it again.',
+    );
+    setActiveJob(null);
+    refresh();
+  };
+
   const job = useJobProgress(activeJob?.jobId ?? null, (finished: JobRecord) => {
     const label = JOB_LABELS[activeJob?.type ?? finished.type] ?? 'Job';
     if (finished.status === 'failed') {
@@ -89,8 +100,7 @@ export default function ProjectOverview() {
       refresh();
       setActiveJob(null);
     }, 400);
-  });
-
+  }, 400, onJobLost);
   // When files failed extraction, check whether the cause is a missing
   // Python dependency on this machine (Pillow) and show an actionable hint.
   useEffect(() => {
@@ -212,7 +222,17 @@ export default function ProjectOverview() {
                 api
                   .deleteProject(projectId)
                   .then(() => navigate('/'))
-                  .catch((e) => setError(e.message));
+                  .catch((e) => {
+                    const err = e as Error & { status?: number };
+                    if (err.status === 404) {
+                      // already removed (e.g. wiped by a server restart)
+                      notify('info', 'Project already removed', 'Refreshing the workspace list.');
+                      navigate('/');
+                      return;
+                    }
+                    console.error('[ProjectPack] Delete failed:', err);
+                    notify('error', 'Delete failed', err.message);
+                  });
               }
             }}
             className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
@@ -244,7 +264,7 @@ export default function ProjectOverview() {
           <ProgressBar
             value={job.progress}
             label={`${JOB_LABELS[activeJob?.type ?? job.type] ?? 'Working'} — ${
-              job.total > 0 ? `${job.completed}/${job.total} items` : 'preparing…'
+              job.detail ?? (job.total > 0 ? `${job.completed}/${job.total} items` : 'preparing…')
             }`}
           />
           {job.status === 'completed' && (

@@ -34,7 +34,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       (response.status === 500
         ? 'The API could not complete this request — is the dev server running? (npm run dev:api)'
         : `Request failed (${response.status})`);
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number };
+    // expose the HTTP status so callers can distinguish "job lost after a
+    // server restart" (404) from a transient network blip
+    error.status = response.status;
+    throw error;
   }
   return body as T;
 }
@@ -142,10 +146,10 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
-  analyzeWebsite: (url: string, name?: string) =>
-    request<{ projectId: string; jobId: string }>('/website/analyze', {
+  analyzeWebsite: (url: string, name?: string, skipMedia?: boolean) =>
+    request<{ projectId: string; jobId: string; reused?: boolean }>('/website/analyze', {
       method: 'POST',
-      body: JSON.stringify({ url, name }),
+      body: JSON.stringify({ url, name, skipMedia }),
     }),
 
   listImages: (id: string) =>

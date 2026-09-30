@@ -4,6 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Response } from 'superagent';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { TEST } from './setup.js';
 import { waitForJob } from './helpers.js';
 
@@ -38,8 +39,17 @@ beforeAll(async () => {
   // Fixture site on loopback (the crawler bypasses any proxy for localhost).
   server = http.createServer((req, res) => {
     const send = (status: number, type: string, body: string | Buffer) => {
-      res.writeHead(status, { 'Content-Type': type });
-      res.end(body);
+      const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
+      // Validators let a re-import skip unchanged files with a 304.
+      const etag = `"${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16)}"`;
+      const lastModified = 'Wed, 01 Oct 2025 10:00:00 GMT';
+      if (status === 200 && req.headers['if-none-match'] === etag) {
+        res.writeHead(304, { ETag: etag, 'Last-Modified': lastModified });
+        res.end();
+        return;
+      }
+      res.writeHead(status, { 'Content-Type': type, ETag: etag, 'Last-Modified': lastModified });
+      res.end(buf);
     };
     switch (req.url) {
       case '/':
@@ -72,6 +82,13 @@ beforeAll(async () => {
         break;
       case '/media/clip.mp4':
         send(200, 'video/mp4', Buffer.from('00000018667479706d703432fakevideodata'));
+        break;
+      case '/media.html':
+        send(
+          200,
+          'text/html',
+          '<!doctype html><html><body><img src="/img/logo.png" alt="Logo"><video controls><source src="/media/clip.mp4" type="video/mp4"></video></body></html>',
+        );
         break;
       case '/about.html':
         send(200, 'text/html', '<!doctype html><html><body><p>About fixture page alpha.</p></body></html>');
@@ -260,5 +277,36 @@ describe('website import pipeline', () => {
     } else {
       expect(enhance.status).toBe(503);
     }
+  });
+
+  it('skipMedia leaves video/audio out of the mirror (but keeps images)', async () => {
+    const res = await request(app)
+      .post('/api/website/analyze')
+      .send({ url: `${baseUrl}/media.html`, name: 'No media', skipMedia: true });
+    expect(res.status).toBe(202);
+    const finished = await waitForJob(app, res.body.jobId);
+    expect(finished.status).toBe('completed');
+
+    const files = await request(app).get(`/api/projects/${res.body.projectId}/files`);
+    const paths = files.body.files.map((f: { relativePath: string }) => f.relativePath);
+    expect(paths.some((p: string) => p.endsWith('.mp4'))).toBe(false);
+    expect(paths.some((p: string) => p.endsWith('.png'))).toBe(true);
+    // skipped media is reported, not silently dropped
+    expect((finished.result as { skippedMedia?: number }).skippedMedia ?? 0).toBeGreaterThan(0);
+  });
+
+  it('re-importing the same site refreshes that project and skips unchanged files (304)', async () => {
+    const res = await request(app).post('/api/website/analyze').send({ url: baseUrl });
+    expect(res.status).toBe(202);
+    // no duplicate project — the original one is refreshed
+    expect(res.body.reused).toBe(true);
+    expect(res.body.projectId).toBe(projectId);
+
+    const finished = await waitForJob(app, res.body.jobId);
+    expect(finished.status).toBe('completed');
+    const result = finished.result as { reused?: boolean; unchanged?: number };
+    expect(result.reused).toBe(true);
+    // the fixture sends ETag, so the second crawl gets 304s instead of re-downloading
+    expect(result.unchanged ?? 0).toBeGreaterThan(0);
   });
 });

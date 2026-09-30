@@ -74,6 +74,12 @@ export const env = {
   websiteRequestDelayMs: int(process.env.WEBSITE_REQUEST_DELAY_MS, 100),
   websiteTimeoutMs: int(process.env.WEBSITE_TIMEOUT_MS, 20_000),
   websiteConcurrency: int(process.env.WEBSITE_CONCURRENCY, 6),
+  // Python-engine phase concurrency. Every concurrent batch spawns its own
+  // Python process (tens of MB RSS each), so on small hosts (Render free =
+  // 512 MB) a high value gets the whole service OOM-killed. Keep these low
+  // and tune per host.
+  extractConcurrency: int(process.env.EXTRACT_CONCURRENCY, 2),
+  hashConcurrency: int(process.env.HASH_CONCURRENCY, 2),
   // Optional AI prompt enhancement (ADR-007: the core stays deterministic;
   // AI is only used when the user explicitly asks for it and a key is set).
   aiBaseUrl: process.env.AI_BASE_URL ?? 'https://api.openai.com/v1',

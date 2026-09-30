@@ -60,6 +60,8 @@ export interface JobRecord {
   startedAt: string;
   completedAt?: string;
   error?: string;
+  /** human-readable live detail, e.g. "142/411 files · 12.4 MB" */
+  detail?: string;
   result?: Record<string, unknown>;
 }
 
@@ -159,6 +161,12 @@ export interface WebsiteAssetInfo {
   url: string;
   contentType?: string;
   alt?: string;
+  /** sha256 computed while the file streamed to disk */
+  hash?: string;
+  size?: number;
+  /** validators kept so a re-import can skip unchanged files (HTTP 304) */
+  etag?: string;
+  lastModified?: string;
 }
 
 export interface ImageInfo {
