@@ -1,0 +1,23 @@
+{
+  "name": "projectpack",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:api": "npm run dev --workspace @projectpack/api",
+    "dev:web": "npm run dev --workspace @projectpack/web",
+    "build": "npm run build --workspace @projectpack/shared && npm run build --workspace @projectpack/api && npm run build --workspace @projectpack/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test:api": "npm run test --workspace @projectpack/api",
+    "test:python": "python3 -m pytest python/file_engine/tests -q",
+    "install:python": "python3 -m pip install -r python/file_engine/requirements.txt",
+    "start": "node apps/api/dist/server.js"
+  }
+}
