@@ -58,7 +58,7 @@ async function politeFetch(url: URL, extraHeaders: Record<string, string> = {}):
     redirect: 'follow',
     signal: AbortSignal.timeout(env.websiteTimeoutMs),
     headers: {
-      'User-Agent': 'ProjectPack/0.4 (+website-import)',
+      'User-Agent': env.websiteUserAgent,
       Accept: 'text/html,application/xhtml+xml,text/css,*/*;q=0.8',
       ...extraHeaders,
     },
@@ -130,6 +130,8 @@ interface CrawlStats {
   failed: number;
   truncated: boolean;
   failures: FetchFailure[];
+  /** files actually present in the mirror (written or reused via 304) */
+  saved: number;
   /** files kept from a previous import because the server said 304 */
   unchanged: number;
   /** heavy media files skipped because the user asked to skip them */
@@ -456,10 +458,15 @@ async function crawl(
     failed: 0,
     truncated: false,
     failures: [],
+    saved: 0,
     unchanged: 0,
     skippedMedia: 0,
   };
   const budget = env.websiteMaxPages + env.websiteMaxAssets;
+  // The mirror directory must exist even when every fetch fails: the scan
+  // engine validates the source root before reading it, and a missing folder
+  // used to surface as the confusing "Source root is not accessible".
+  fs.mkdirSync(dest, { recursive: true });
   // Hashes computed while downloading — the scan phase reuses them instead of
   // re-reading every file off disk.
   const knownHashes = new Map<string, string>();
@@ -542,9 +549,13 @@ async function crawl(
     // Conditional request: if we already have this file from an earlier
     // import, ask the server whether it changed. A 304 means we skip the
     // download AND the hash entirely — re-imports become seconds.
+    // Validators are only sent when the local copy still exists (the disk is
+    // ephemeral on small hosts — a 304 with no local file would lose it).
+    const prevPath = prev ? path.join(dest, prev.relativePath) : '';
+    const havePrev = Boolean(prev && fs.existsSync(prevPath));
     const validators: Record<string, string> = {};
-    if (prev?.etag) validators['if-none-match'] = prev.etag;
-    if (prev?.lastModified) validators['if-modified-since'] = prev.lastModified;
+    if (havePrev && prev?.etag) validators['if-none-match'] = prev.etag;
+    if (havePrev && prev?.lastModified) validators['if-modified-since'] = prev.lastModified;
 
     const outcome = await fetchWithRetry(url, validators);
     if (!outcome.ok) {
@@ -555,7 +566,7 @@ async function crawl(
     const res = outcome.res;
     const contentType = res.headers.get('content-type') ?? '';
 
-    if (res.status === 304 && prev) {
+    if (res.status === 304 && prev && havePrev) {
       const abs = path.join(dest, prev.relativePath);
       if (fs.existsSync(abs)) {
         const effectiveType = prev.contentType ?? contentType;
@@ -563,6 +574,7 @@ async function crawl(
           effectiveType.includes('text/html') || effectiveType.includes('application/xhtml');
         saved.set(key, prev.relativePath);
         stats.bytes += prev.size ?? 0;
+        stats.saved += 1;
         stats.unchanged += 1;
         if (prev.hash) knownHashes.set(prev.relativePath, prev.hash);
         if (IMAGE_EXTENSIONS.has(path.extname(prev.relativePath))) {
@@ -617,6 +629,7 @@ async function crawl(
 
     const digest = hash.digest('hex');
     stats.bytes += written.size;
+    stats.saved += 1;
     saved.set(key, rel);
     knownHashes.set(rel, digest);
     if (IMAGE_EXTENSIONS.has(effectiveExt)) {
@@ -769,10 +782,18 @@ export async function analyzeWebsite(
       skipMedia: options.skipMedia,
       previous,
     });
-    if (stats.pages === 0 && stats.assets === 0) {
+    if (stats.saved === 0) {
+      // Nothing reached the mirror — say exactly why (status + first URL)
+      // instead of letting the scan fail with a cryptic path error.
+      const first = stats.failures[0];
+      const reason = first
+        ? `${first.status ?? 'network error'} on ${first.url}`
+        : 'no pages or assets were found';
       throw new AppError(
         'WEBSITE_ERROR',
-        `Could not fetch anything from ${seed.origin} — the site may be down, blocking bots, or behind authentication`,
+        `Could not download anything from ${seed.origin} (${reason}). The site may be ` +
+          'blocking automated access, rate-limiting, or behind authentication — try again in a ' +
+          'minute, or paste the URL from a different network.',
         502,
       );
     }

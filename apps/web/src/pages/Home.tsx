@@ -29,6 +29,20 @@ export default function Home() {
       .catch((e) => setError(e.message));
   }, []);
 
+  // Coming back via Back/Forward restores this page from the browser cache
+  // with its old state — clear anything that was mid-flight so the UI is never
+  // stuck in "Importing…" with disabled buttons.
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setImportJobId(null);
+      setBusy(false);
+      void api.listProjects().then(setProjects).catch(() => undefined);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+
   async function deleteProject(project: ProjectSummary) {
     if (
       !window.confirm(
@@ -73,6 +87,13 @@ export default function Home() {
             'Opening the project…',
           );
         }
+        // Clear the import UI state *before* navigating. Otherwise pressing
+        // Back restores a page whose buttons are still disabled and whose bar
+        // is frozen at 100% (the browser's back/forward cache keeps the old
+        // JS state, and the job is already terminal so nothing resets it).
+        setImportJobId(null);
+        setBusy(false);
+        void api.listProjects().then(setProjects).catch(() => undefined);
         // brief pause so the toast is visible before navigating
         setTimeout(() => {
           window.location.href = `/projects/${importProjectId}`;
@@ -84,6 +105,8 @@ export default function Home() {
       notify('error', 'Import failed', job.error ?? undefined);
       setImportJobId(null);
       setBusy(false);
+      // an import creates a project row even if it fails — keep the list honest
+      void api.listProjects().then(setProjects).catch(() => undefined);
     },
     400,
     () => {

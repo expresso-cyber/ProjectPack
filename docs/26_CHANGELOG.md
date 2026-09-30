@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.1 — Clear failures, no stuck UI
+
+- **Fixed: cryptic "Source root is not accessible" when an import fails.** The
+  mirror folder is now created up-front, and an import that downloads nothing
+  fails with the real reason instead — "Could not download anything from
+  <site> (403 on <url>)…" — so a blocked or rate-limited site is obvious.
+- **Fixed: the workspace could stay stuck on "Importing…" with disabled
+  buttons and the bar frozen at 100%.** The import state is cleared before
+  navigating to the project, and a `pageshow` guard resets stale in-flight
+  state whenever the page is restored from the browser's back/forward cache.
+- **Fixed: conditional re-import requests** are only sent when the local copy
+  still exists, so a 304 can never leave a file missing after a disk reset.
+- **Browser-compatible User-Agent** by default (override with
+  WEBSITE_USER_AGENT): many hosts return 403 for unknown agents, which made
+  imports of public sites fail. robots.txt is still respected.
+- The workspace project list refreshes after a failed import (a failed import
+  keeps its project row so the error stays visible; delete it with the card's
+  ✕ button).
+
 ## 0.6.0 — Memory-safe crawler, faster imports, re-import refresh
 
 - **Fixed: free-tier instance restarts (out of memory).** The crawler used to

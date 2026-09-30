@@ -83,6 +83,9 @@ beforeAll(async () => {
       case '/media/clip.mp4':
         send(200, 'video/mp4', Buffer.from('00000018667479706d703432fakevideodata'));
         break;
+      case '/blocked.html':
+        send(403, 'text/html', 'Forbidden');
+        break;
       case '/media.html':
         send(
           200,
@@ -293,6 +296,18 @@ describe('website import pipeline', () => {
     expect(paths.some((p: string) => p.endsWith('.png'))).toBe(true);
     // skipped media is reported, not silently dropped
     expect((finished.result as { skippedMedia?: number }).skippedMedia ?? 0).toBeGreaterThan(0);
+  });
+
+  it('explains a blocked site clearly instead of a cryptic path error', async () => {
+    const res = await request(app).post('/api/website/analyze').send({ url: `${baseUrl}/blocked.html` });
+    expect(res.status).toBe(202);
+    const finished = await waitForJob(app, res.body.jobId);
+    expect(finished.status).toBe('failed');
+    // the real reason, with the HTTP status…
+    expect(finished.error).toContain('Could not download anything');
+    expect(finished.error).toContain('403');
+    // …and never the confusing engine path message
+    expect(finished.error).not.toContain('Source root is not accessible');
   });
 
   it('re-importing the same site refreshes that project and skips unchanged files (304)', async () => {
