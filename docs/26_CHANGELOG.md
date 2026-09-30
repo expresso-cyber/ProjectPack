@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 — CI fix
+
+- python/file_engine/requirements.txt now includes pytest — GitHub Actions
+  (and any fresh machine) runs "npm run test:python" straight after
+  "npm run install:python" without a missing-module failure.
+
 ## 0.5.1 — Single-service production mode (deployable)
 
 - The API now serves the built web UI itself when apps/web/dist exists
