@@ -77,6 +77,13 @@ export const env = {
   // A browser-compatible User-Agent by default: many hosts reject unknown
   // agents outright (403), which made imports of otherwise public sites fail.
   // robots.txt is still respected. Override with WEBSITE_USER_AGENT.
+  // When the direct request fails at the network level (some hosts block
+  // datacenter IPs outright), the crawler retries through this proxy template.
+  // {url} is replaced with the encoded target. Set it empty to disable.
+  websiteFallbackProxy:
+    process.env.WEBSITE_FALLBACK_PROXY === undefined
+      ? 'https://api.allorigins.win/raw?url={url}'
+      : process.env.WEBSITE_FALLBACK_PROXY,
   websiteUserAgent:
     process.env.WEBSITE_USER_AGENT ??
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',

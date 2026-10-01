@@ -21,8 +21,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
     });
   } catch {
+    const local =
+      typeof window !== 'undefined' &&
+      /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
     throw new Error(
-      'Cannot reach the ProjectPack API. Make sure it is running: "npm run dev:api" (port 3001).',
+      local
+        ? 'Cannot reach the ProjectPack API. Make sure it is running: "npm run dev:api" (port 3001).'
+        : 'Cannot reach the ProjectPack API — the free instance may be waking up (it sleeps after 15 minutes idle and takes about a minute). Check your connection and try again.',
     );
   }
   if (response.status === 204) return undefined as T;

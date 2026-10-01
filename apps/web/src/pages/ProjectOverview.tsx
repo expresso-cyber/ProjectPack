@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, exportApi } from '../services/api';
 import type { ProjectDetail } from '../services/api';
 import type { FileRecord, JobRecord } from '@projectpack/shared';
-import { ErrorBanner, SkeletonCards, ProgressBar } from '../components/ui';
+import { EmptyState, ErrorBanner, SkeletonCards, ProgressBar } from '../components/ui';
 import { ProjectBreadcrumbs } from '../components/Breadcrumbs';
 import { useToast } from '../components/Toast';
 import { downloadFromUrl } from '../lib/download';
@@ -28,6 +28,9 @@ export default function ProjectOverview() {
   const [activeJob, setActiveJob] = useState<{ jobId: string; type: string } | null>(null);
   const [excludeInput, setExcludeInput] = useState('');
   const [pillowHint, setPillowHint] = useState(false);
+  // The project disappeared server-side (free-tier restart wiped the disk) —
+  // stop every polling loop and explain instead of hammering 404s.
+  const [gone, setGone] = useState(false);
   // download failures already logged — avoids repeat console warnings on refresh
   const warnedFailures = useRef<Set<string>>(new Set());
 
@@ -53,7 +56,17 @@ export default function ProjectOverview() {
           return prev === joined ? prev : joined;
         });
       })
-      .catch((e) => setError(e.message));
+      .catch((e) => {
+        const err = e as Error & { status?: number };
+        if (err.status === 404) {
+          // not an error the user can act on by reloading — say what happened
+          setGone(true);
+          setActiveJob(null);
+          setProject(null);
+          return;
+        }
+        setError(err.message);
+      });
   }, [projectId]);
 
   useEffect(refresh, [refresh]);
@@ -71,7 +84,7 @@ export default function ProjectOverview() {
 
   // While a scan (e.g. the tail end of a website import) is running, keep the
   // page live instead of showing stale zeros until a manual reload.
-  const scanning = project?.status === 'scanning';
+  const scanning = project?.status === 'scanning' && !gone;
   useEffect(() => {
     if (!scanning) return;
     const timer = setInterval(() => refresh(), 1500);
@@ -158,6 +171,31 @@ export default function ProjectOverview() {
   }
 
   const busy = activeJob !== null;
+
+  if (gone) {
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => navigate('/')}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+        >
+          ← Back to workspace
+        </button>
+        <EmptyState
+          title="This project no longer exists"
+          description="Its data was removed by the last server restart (free instances have an ephemeral disk). Re-import it from the workspace — nothing is broken."
+          action={
+            <button
+              onClick={() => navigate('/')}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              Go to workspace
+            </button>
+          }
+        />
+      </div>
+    );
+  }
 
   if (!project && !error) {
     return (

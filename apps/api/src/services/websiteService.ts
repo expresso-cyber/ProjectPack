@@ -53,6 +53,26 @@ function dispatcherFor(url: URL): unknown {
   return isLocalHost(url.hostname) ? directAgent : proxyAgent;
 }
 
+/**
+ * Some hosts block datacenter IPs (or answer 403/451 to non-browser clients).
+ * When a fallback proxy template is configured, retry through it — it comes
+ * from a different IP, which usually succeeds. Disable by setting
+ * WEBSITE_FALLBACK_PROXY to an empty string.
+ */
+function canUseFallback(url: URL): boolean {
+  return Boolean(env.websiteFallbackProxy) && !isLocalHost(url.hostname);
+}
+
+async function fetchViaFallbackProxy(url: URL): Promise<Response> {
+  const template = env.websiteFallbackProxy as string;
+  const proxied = template.replace('{url}', encodeURIComponent(url.toString()));
+  return fetch(proxied, {
+    redirect: 'follow',
+    signal: AbortSignal.timeout(env.websiteTimeoutMs),
+    headers: { 'User-Agent': env.websiteUserAgent },
+  });
+}
+
 async function politeFetch(url: URL, extraHeaders: Record<string, string> = {}): Promise<Response> {
   const init: RequestInit = {
     redirect: 'follow',
@@ -64,7 +84,18 @@ async function politeFetch(url: URL, extraHeaders: Record<string, string> = {}):
     },
   };
   const dispatcher = dispatcherFor(url);
-  return fetch(url, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
+  let res: Response;
+  try {
+    res = await fetch(url, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
+  } catch (err) {
+    if (!canUseFallback(url)) throw err;
+    return await fetchViaFallbackProxy(url);
+  }
+  if ((res.status === 403 || res.status === 451) && canUseFallback(url)) {
+    const proxied = await fetchViaFallbackProxy(url).catch(() => null);
+    if (proxied && proxied.ok) return proxied;
+  }
+  return res;
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.avif', '.bmp', '.tiff']);

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.7.0 — Browser Mode (client-side import & storage) + hosted-app fixes
+
+- **New: Browser Mode** (`/browser`). Import a **local folder** (File System
+  Access API), a **GitHub repository** (GitHub API + raw files) or a **live
+  website** (through a CORS proxy) — everything is fetched and stored **in the
+  visitor's browser** (IndexedDB). The server is never involved, so it works
+  when the free instance has restarted, when its disk was wiped, or when the
+  host blocks datacenter IPs, and it can read folders no server could see.
+  Per project: stats, text search, duplicate detection, per-file download and
+  "Download all (ZIP)" built in the browser. See docs/30_BROWSER_MODE.md.
+- **Fixed: 404 storms on a project that a restart wiped.** The project page now
+  shows "This project no longer exists" with a way back, instead of polling a
+  missing project forever (and retrying scans against it).
+- **Fixed: failed imports left empty "0 files / 0 B" projects behind.** After a
+  failed or lost import the empty shell is removed again and the list refreshes.
+- **Fixed: hosted local-folder confusion.** On a hosted deployment the local
+  folder card explains that the server cannot see the visitor's disk and points
+  at Browser Mode; the "cannot reach the API" message now mentions the free
+  instance waking up instead of suggesting a dev command.
+- **Crawler: fallback proxy for IP-blocked sites** (WEBSITE_FALLBACK_PROXY,
+  default `https://api.allorigins.win/raw?url={url}`, set empty to disable).
+  When a direct request fails at the network level, or the host answers
+  403/451, the fetch is retried through the proxy — which usually succeeds
+  because it comes from a different IP.
+- **New web test suite** (vitest + jsdom + fake-indexeddb, 12 tests) wired into
+  CI: `npm run test:web`.
+
 ## 0.6.1 — Clear failures, no stuck UI
 
 - **Fixed: cryptic "Source root is not accessible" when an import fails.** The

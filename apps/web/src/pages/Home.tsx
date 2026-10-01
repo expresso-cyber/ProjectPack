@@ -43,6 +43,21 @@ export default function Home() {
     return () => window.removeEventListener('pageshow', onPageShow);
   }, []);
 
+  /**
+   * A failed import creates a project row before it knows whether anything
+   * downloads. Remove that empty shell again (only when it has no files) so
+   * the workspace never fills up with "0 files / 0 B" ghosts.
+   */
+  async function cleanupEmptyImport(projectId: string) {
+    try {
+      const detail = await api.getProject(projectId);
+      if ((detail.fileCount ?? 0) === 0) await api.deleteProject(projectId);
+    } catch {
+      /* already gone, or not ours to clean — ignore */
+    }
+    void api.listProjects().then(setProjects).catch(() => undefined);
+  }
+
   async function deleteProject(project: ProjectSummary) {
     if (
       !window.confirm(
@@ -105,8 +120,8 @@ export default function Home() {
       notify('error', 'Import failed', job.error ?? undefined);
       setImportJobId(null);
       setBusy(false);
-      // an import creates a project row even if it fails — keep the list honest
-      void api.listProjects().then(setProjects).catch(() => undefined);
+      // remove the empty shell this failed import created, then refresh
+      if (importProjectId) void cleanupEmptyImport(importProjectId);
     },
     400,
     () => {
@@ -120,7 +135,7 @@ export default function Home() {
       );
       setImportJobId(null);
       setBusy(false);
-      void api.listProjects().then(setProjects).catch(() => undefined);
+      if (importProjectId) void cleanupEmptyImport(importProjectId);
     },
   );
 
@@ -176,11 +191,24 @@ export default function Home() {
   }
 
   const importing = importJobId !== null;
+  // On a hosted deployment the API cannot see the visitor's disk, so a local
+  // path is meaningless there — point at Browser Mode / local run instead.
+  const hosted =
+    typeof window !== 'undefined' &&
+    !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
   return (
     <div className="space-y-8">
       <section>
-        <h1 className="text-xl font-semibold text-slate-900">Workspace</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-xl font-semibold text-slate-900">Workspace</h1>
+          <Link
+            to="/browser"
+            className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
+          >
+            Browser Mode — import & store in your browser (no server)
+          </Link>
+        </div>
         <p className="mt-1 text-sm text-slate-500">
           Scan a local project folder or import a public GitHub repository, then search, analyze, and package it.
         </p>
@@ -198,6 +226,15 @@ export default function Home() {
         >
           <h2 className="font-medium text-slate-900">Analyze local project</h2>
           <p className="mt-1 text-xs text-slate-500">The folder is only read — never modified.</p>
+          {hosted && (
+            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+              This deployment is hosted, so the server cannot see your computer's folders. Use{' '}
+              <Link to="/browser" className="font-medium underline">
+                Browser Mode
+              </Link>{' '}
+              (reads the folder in your browser, nothing is uploaded) or run ProjectPack locally.
+            </p>
+          )}
           <input
             className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             placeholder="Project name"
