@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, exportApi } from '../services/api';
 import type { ProjectDetail } from '../services/api';
 import type { FileRecord, JobRecord } from '@projectpack/shared';
-import { EmptyState, ErrorBanner, SkeletonCards, ProgressBar } from '../components/ui';
+import { ErrorBanner, SkeletonCards, ProgressBar } from '../components/ui';
 import { ProjectBreadcrumbs } from '../components/Breadcrumbs';
 import { useToast } from '../components/Toast';
 import { downloadFromUrl } from '../lib/download';
@@ -28,9 +28,6 @@ export default function ProjectOverview() {
   const [activeJob, setActiveJob] = useState<{ jobId: string; type: string } | null>(null);
   const [excludeInput, setExcludeInput] = useState('');
   const [pillowHint, setPillowHint] = useState(false);
-  // The project disappeared server-side (free-tier restart wiped the disk) —
-  // stop every polling loop and explain instead of hammering 404s.
-  const [gone, setGone] = useState(false);
   // download failures already logged — avoids repeat console warnings on refresh
   const warnedFailures = useRef<Set<string>>(new Set());
 
@@ -56,51 +53,19 @@ export default function ProjectOverview() {
           return prev === joined ? prev : joined;
         });
       })
-      .catch((e) => {
-        const err = e as Error & { status?: number };
-        if (err.status === 404) {
-          // not an error the user can act on by reloading — say what happened
-          setGone(true);
-          setActiveJob(null);
-          setProject(null);
-          return;
-        }
-        setError(err.message);
-      });
+      .catch((e) => setError(e.message));
   }, [projectId]);
 
   useEffect(refresh, [refresh]);
 
-  // Back/Forward cache restore: drop a stale in-flight job bar and re-read state.
-  useEffect(() => {
-    const onPageShow = (event: PageTransitionEvent) => {
-      if (!event.persisted) return;
-      setActiveJob(null);
-      refresh();
-    };
-    window.addEventListener('pageshow', onPageShow);
-    return () => window.removeEventListener('pageshow', onPageShow);
-  }, [refresh]);
-
   // While a scan (e.g. the tail end of a website import) is running, keep the
   // page live instead of showing stale zeros until a manual reload.
-  const scanning = project?.status === 'scanning' && !gone;
+  const scanning = project?.status === 'scanning';
   useEffect(() => {
     if (!scanning) return;
     const timer = setInterval(() => refresh(), 1500);
     return () => clearInterval(timer);
   }, [scanning, refresh]);
-
-  const onJobLost = () => {
-    console.warn('[ProjectPack] Job was lost (server restarted).');
-    notify(
-      'error',
-      'Job interrupted',
-      'The server restarted and lost this job. Nothing is broken — run it again.',
-    );
-    setActiveJob(null);
-    refresh();
-  };
 
   const job = useJobProgress(activeJob?.jobId ?? null, (finished: JobRecord) => {
     const label = JOB_LABELS[activeJob?.type ?? finished.type] ?? 'Job';
@@ -124,7 +89,8 @@ export default function ProjectOverview() {
       refresh();
       setActiveJob(null);
     }, 400);
-  }, 400, onJobLost);
+  });
+
   // When files failed extraction, check whether the cause is a missing
   // Python dependency on this machine (Pillow) and show an actionable hint.
   useEffect(() => {
@@ -171,31 +137,6 @@ export default function ProjectOverview() {
   }
 
   const busy = activeJob !== null;
-
-  if (gone) {
-    return (
-      <div className="space-y-4">
-        <button
-          onClick={() => navigate('/')}
-          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
-        >
-          ← Back to workspace
-        </button>
-        <EmptyState
-          title="This project no longer exists"
-          description="Its data was removed by the last server restart (free instances have an ephemeral disk). Re-import it from the workspace — nothing is broken."
-          action={
-            <button
-              onClick={() => navigate('/')}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              Go to workspace
-            </button>
-          }
-        />
-      </div>
-    );
-  }
 
   if (!project && !error) {
     return (
@@ -271,17 +212,7 @@ export default function ProjectOverview() {
                 api
                   .deleteProject(projectId)
                   .then(() => navigate('/'))
-                  .catch((e) => {
-                    const err = e as Error & { status?: number };
-                    if (err.status === 404) {
-                      // already removed (e.g. wiped by a server restart)
-                      notify('info', 'Project already removed', 'Refreshing the workspace list.');
-                      navigate('/');
-                      return;
-                    }
-                    console.error('[ProjectPack] Delete failed:', err);
-                    notify('error', 'Delete failed', err.message);
-                  });
+                  .catch((e) => setError(e.message));
               }
             }}
             className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50"
@@ -313,7 +244,7 @@ export default function ProjectOverview() {
           <ProgressBar
             value={job.progress}
             label={`${JOB_LABELS[activeJob?.type ?? job.type] ?? 'Working'} — ${
-              job.detail ?? (job.total > 0 ? `${job.completed}/${job.total} items` : 'preparing…')
+              job.total > 0 ? `${job.completed}/${job.total} items` : 'preparing…'
             }`}
           />
           {job.status === 'completed' && (

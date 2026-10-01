@@ -21,13 +21,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       ...init,
     });
   } catch {
-    const local =
-      typeof window !== 'undefined' &&
-      /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
     throw new Error(
-      local
-        ? 'Cannot reach the ProjectPack API. Make sure it is running: "npm run dev:api" (port 3001).'
-        : 'Cannot reach the ProjectPack API — the free instance may be waking up (it sleeps after 15 minutes idle and takes about a minute). Check your connection and try again.',
+      'Cannot reach the ProjectPack API. Make sure it is running: "npm run dev:api" (port 3001).',
     );
   }
   if (response.status === 204) return undefined as T;
@@ -39,11 +34,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       (response.status === 500
         ? 'The API could not complete this request — is the dev server running? (npm run dev:api)'
         : `Request failed (${response.status})`);
-    const error = new Error(message) as Error & { status?: number };
-    // expose the HTTP status so callers can distinguish "job lost after a
-    // server restart" (404) from a transient network blip
-    error.status = response.status;
-    throw error;
+    throw new Error(message);
   }
   return body as T;
 }
@@ -151,10 +142,10 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
-  analyzeWebsite: (url: string, name?: string, skipMedia?: boolean) =>
-    request<{ projectId: string; jobId: string; reused?: boolean }>('/website/analyze', {
+  analyzeWebsite: (url: string, name?: string) =>
+    request<{ projectId: string; jobId: string }>('/website/analyze', {
       method: 'POST',
-      body: JSON.stringify({ url, name, skipMedia }),
+      body: JSON.stringify({ url, name }),
     }),
 
   listImages: (id: string) =>

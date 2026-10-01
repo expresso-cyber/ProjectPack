@@ -1,6 +1,6 @@
+import os from 'node:os';
 import fs from 'node:fs';
 import type { FileRecord, JobRecord, DuplicateGroup } from '@projectpack/shared';
-import { env } from '../config/env.js';
 import { store, fileIdFor } from './store.js';
 import { runEngine } from './pythonBridge.js';
 import { jobManager } from '../jobs/jobManager.js';
@@ -41,8 +41,7 @@ interface ScanOutput {
  */
 export async function scanWork(
   projectId: string,
-  report: (completed: number, total: number, failed?: number, detail?: string) => void,
-  opts: { knownHashes?: Map<string, string> } = {},
+  report: (completed: number, total: number, failed?: number) => void,
 ): Promise<Record<string, unknown>> {
   const project = store.requireProject(projectId);
   {
@@ -55,15 +54,9 @@ export async function scanWork(
       report(0, scan.files.length);
 
       // Content hashing (duplicate detection input) — parallel engine batches.
-      // Hashes already computed while a file was downloaded (website import)
-      // are reused, so only new/changed files are read off disk again.
-      const known = opts.knownHashes;
-      const hashInput = scan.files
-        .map((f) => f.relativePath)
-        .filter((p) => !known?.has(p));
+      const hashInput = scan.files.map((f) => f.relativePath);
       const hashBatches = chunk(hashInput, 500);
       const hashes = new Map<string, string>();
-      if (known) for (const [p, h] of known) hashes.set(p, h);
       let hashCursor = 0;
       let hashed = 0;
       const hashWorker = async (): Promise<void> => {
@@ -76,14 +69,11 @@ export async function scanWork(
           });
           for (const r of results) if (r.hash) hashes.set(r.relativePath, r.hash);
           hashed += batch.length;
-          report(hashed, hashInput.length, undefined, `Hashing files — ${hashed}/${hashInput.length}`);
+          report(hashed, hashInput.length);
         }
       };
       await Promise.all(
-        Array.from(
-          { length: Math.min(Math.max(1, env.hashConcurrency), 4) },
-          () => hashWorker(),
-        ),
+        Array.from({ length: Math.min(Math.max(1, os.cpus().length - 1), 4) }, () => hashWorker()),
       );
 
       // Preserve extraction state across rescans: if a file's content hash is

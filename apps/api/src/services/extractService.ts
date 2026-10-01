@@ -1,5 +1,5 @@
+import os from 'node:os';
 import type { FileRecord, JobRecord, ContentResponse } from '@projectpack/shared';
-import { env } from '../config/env.js';
 import { store } from './store.js';
 import { runEngine } from './pythonBridge.js';
 import { jobManager } from '../jobs/jobManager.js';
@@ -37,13 +37,8 @@ function friendlyExtractionError(error?: string): string | undefined {
   return error;
 }
 
-/**
- * Parallel engine processes. Each concurrent batch spawns a separate Python
- * process (tens of MB RSS each), so on a small host (Render free = 512 MB)
- * a high value gets the service OOM-killed. Default 2, tune with
- * EXTRACT_CONCURRENCY.
- */
-const CONCURRENCY = Math.max(1, Math.min(env.extractConcurrency, 4));
+/** Parallel engine processes — bounded so we do not thrash the machine. */
+const CONCURRENCY = Math.max(1, Math.min(4, os.cpus().length));
 const BATCH = 40;
 
 /** Start extraction in the background; the client polls /api/jobs/:jobId. */
@@ -55,7 +50,7 @@ export function startExtraction(projectId: string): JobRecord {
 /** Extraction work (shared with the awaited variant). */
 async function extractionWork(
   projectId: string,
-  report: (completed: number, total: number, failed?: number, detail?: string) => void,
+  report: (completed: number, total: number, failed?: number) => void,
 ): Promise<Record<string, unknown>> {
   const project = store.requireProject(projectId);
   const pending = store
@@ -113,7 +108,7 @@ async function extractionWork(
         }
 
         done += batch.length;
-        report(done, pending.length, failed, `Extracting content — ${done}/${pending.length} items`);
+        report(done, pending.length, failed);
       }
     };
 

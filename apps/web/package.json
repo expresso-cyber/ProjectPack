@@ -7,15 +7,13 @@
     "dev": "vite",
     "build": "tsc -b tsconfig.json && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b tsconfig.json --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc -b tsconfig.json --noEmit"
   },
   "dependencies": {
     "@projectpack/shared": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.28.0",
-    "fflate": "^0.8.2"
+    "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -24,9 +22,6 @@
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.0",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.0",
-    "jsdom": "^25.0.0",
-    "fake-indexeddb": "^6.0.0"
+    "vite": "^5.4.11"
   }
 }

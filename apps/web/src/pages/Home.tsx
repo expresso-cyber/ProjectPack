@@ -16,7 +16,6 @@ export default function Home() {
   const [githubUrl, setGithubUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [websiteName, setWebsiteName] = useState('');
-  const [skipMedia, setSkipMedia] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importProjectId, setImportProjectId] = useState('');
@@ -28,35 +27,6 @@ export default function Home() {
       .then(setProjects)
       .catch((e) => setError(e.message));
   }, []);
-
-  // Coming back via Back/Forward restores this page from the browser cache
-  // with its old state — clear anything that was mid-flight so the UI is never
-  // stuck in "Importing…" with disabled buttons.
-  useEffect(() => {
-    const onPageShow = (event: PageTransitionEvent) => {
-      if (!event.persisted) return;
-      setImportJobId(null);
-      setBusy(false);
-      void api.listProjects().then(setProjects).catch(() => undefined);
-    };
-    window.addEventListener('pageshow', onPageShow);
-    return () => window.removeEventListener('pageshow', onPageShow);
-  }, []);
-
-  /**
-   * A failed import creates a project row before it knows whether anything
-   * downloads. Remove that empty shell again (only when it has no files) so
-   * the workspace never fills up with "0 files / 0 B" ghosts.
-   */
-  async function cleanupEmptyImport(projectId: string) {
-    try {
-      const detail = await api.getProject(projectId);
-      if ((detail.fileCount ?? 0) === 0) await api.deleteProject(projectId);
-    } catch {
-      /* already gone, or not ours to clean — ignore */
-    }
-    void api.listProjects().then(setProjects).catch(() => undefined);
-  }
 
   async function deleteProject(project: ProjectSummary) {
     if (
@@ -77,67 +47,33 @@ export default function Home() {
     }
   }
 
-  const importJob = useJobProgress(
-    importJobId,
-    (job: JobRecord) => {
-      if (job.status === 'completed') {
-        const result = (job.result ?? {}) as { failures?: unknown[]; reused?: boolean };
-        const failedCount = (result.failures ?? []).length;
-        if (result.reused) {
-          notify(
-            'success',
-            'Existing project refreshed',
-            'Unchanged files were skipped — only what changed was re-fetched.',
-          );
-        } else if (importKind === 'website' && failedCount > 0) {
-          notify(
-            'info',
-            `Import complete — ${failedCount} file${failedCount === 1 ? '' : 's'} could not be downloaded`,
-            'The site may be rate-limiting some assets — re-importing usually recovers them.',
-          );
-        } else {
-          notify(
-            'success',
-            importKind === 'website' ? 'Website import complete' : 'Repository import complete',
-            'Opening the project…',
-          );
-        }
-        // Clear the import UI state *before* navigating. Otherwise pressing
-        // Back restores a page whose buttons are still disabled and whose bar
-        // is frozen at 100% (the browser's back/forward cache keeps the old
-        // JS state, and the job is already terminal so nothing resets it).
-        setImportJobId(null);
-        setBusy(false);
-        void api.listProjects().then(setProjects).catch(() => undefined);
-        // brief pause so the toast is visible before navigating
-        setTimeout(() => {
-          window.location.href = `/projects/${importProjectId}`;
-        }, 700);
-        return;
+  const importJob = useJobProgress(importJobId, (job: JobRecord) => {
+    if (job.status === 'completed') {
+      const failedCount = ((job.result as { failures?: unknown[] } | null)?.failures ?? []).length;
+      if (importKind === 'website' && failedCount > 0) {
+        notify(
+          'info',
+          `Import complete — ${failedCount} file${failedCount === 1 ? '' : 's'} could not be downloaded`,
+          'The site may be rate-limiting some assets — re-importing usually recovers them.',
+        );
+      } else {
+        notify(
+          'success',
+          importKind === 'website' ? 'Website import complete' : 'Repository import complete',
+          'Opening the project…',
+        );
       }
-      // failed — a transient toast plus the browser console (no persistent banner)
-      console.error('[ProjectPack] Import failed:', job.error);
-      notify('error', 'Import failed', job.error ?? undefined);
-      setImportJobId(null);
-      setBusy(false);
-      // remove the empty shell this failed import created, then refresh
-      if (importProjectId) void cleanupEmptyImport(importProjectId);
-    },
-    400,
-    () => {
-      // The job vanished (API restarted / free instance recycled). Stop the bar
-      // and say so plainly instead of polling a dead job forever.
-      console.warn('[ProjectPack] Import job was lost (server restarted).');
-      notify(
-        'error',
-        'Import interrupted',
-        'The server restarted and lost the job. Nothing is broken — import the site again.',
-      );
-      setImportJobId(null);
-      setBusy(false);
-      if (importProjectId) void cleanupEmptyImport(importProjectId);
-    },
-  );
+      // brief pause so the toast is visible before navigating
+      setTimeout(() => {
+        window.location.href = `/projects/${importProjectId}`;
+      }, 700);
+      return;
+    }
+    // failed — surface the error and stop
+    setError(job.error ?? 'Import failed');
+    notify('error', 'Import failed', job.error ?? undefined);
+    setImportJobId(null);
+  });
 
   async function createProject() {
     setBusy(true);
@@ -177,7 +113,6 @@ export default function Home() {
       const { projectId, jobId } = await api.analyzeWebsite(
         websiteUrl,
         websiteName.trim() || undefined,
-        skipMedia,
       );
       setImportKind('website');
       setImportProjectId(projectId);
@@ -191,24 +126,11 @@ export default function Home() {
   }
 
   const importing = importJobId !== null;
-  // On a hosted deployment the API cannot see the visitor's disk, so a local
-  // path is meaningless there — point at Browser Mode / local run instead.
-  const hosted =
-    typeof window !== 'undefined' &&
-    !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
 
   return (
     <div className="space-y-8">
       <section>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-semibold text-slate-900">Workspace</h1>
-          <Link
-            to="/browser"
-            className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
-          >
-            Browser Mode — import & store in your browser (no server)
-          </Link>
-        </div>
+        <h1 className="text-xl font-semibold text-slate-900">Workspace</h1>
         <p className="mt-1 text-sm text-slate-500">
           Scan a local project folder or import a public GitHub repository, then search, analyze, and package it.
         </p>
@@ -226,15 +148,6 @@ export default function Home() {
         >
           <h2 className="font-medium text-slate-900">Analyze local project</h2>
           <p className="mt-1 text-xs text-slate-500">The folder is only read — never modified.</p>
-          {hosted && (
-            <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-              This deployment is hosted, so the server cannot see your computer's folders. Use{' '}
-              <Link to="/browser" className="font-medium underline">
-                Browser Mode
-              </Link>{' '}
-              (reads the folder in your browser, nothing is uploaded) or run ProjectPack locally.
-            </p>
-          )}
           <input
             className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             placeholder="Project name"
@@ -313,16 +226,6 @@ export default function Home() {
             onChange={(e) => setWebsiteName(e.target.value)}
             disabled={importing}
           />
-          <label className="mt-2 flex items-center gap-2 text-xs text-slate-600">
-            <input
-              type="checkbox"
-              checked={skipMedia}
-              onChange={(e) => setSkipMedia(e.target.checked)}
-              disabled={importing}
-              className="h-4 w-4"
-            />
-            Skip video/audio files — much faster, much smaller import
-          </label>
           <button
             className="mt-3 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
             disabled={busy || importing}
@@ -344,7 +247,7 @@ export default function Home() {
             value={importJob?.progress ?? 4}
             label={
               importKind === 'website'
-                ? `Crawling & scanning website${importJob?.detail ? ` — ${importJob.detail}` : ''}`
+                ? 'Crawling & scanning website'
                 : `Downloading & scanning repository — ${importJob?.completed ?? 0}/${importJob?.total || 3} steps`
             }
           />

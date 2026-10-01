@@ -10,7 +10,6 @@ import DuplicatesPage from './pages/DuplicatesPage';
 import PackagePage from './pages/PackagePage';
 import ReportPage from './pages/ReportPage';
 import PromptPage from './pages/PromptPage';
-import BrowserPage from './pages/BrowserPage';
 
 export default function App() {
   return (
@@ -26,7 +25,6 @@ export default function App() {
           <Route path="/projects/:projectId/package" element={<PackagePage />} />
           <Route path="/projects/:projectId/report" element={<ReportPage />} />
           <Route path="/projects/:projectId/prompt" element={<PromptPage />} />
-          <Route path="/browser" element={<BrowserPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Layout>

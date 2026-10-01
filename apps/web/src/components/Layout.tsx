@@ -12,15 +12,6 @@ export default function Layout({ children }: { children: ReactNode }) {
               <img src="/logo.jpeg" alt="ProjectPack logo" className="h-8 w-8 rounded-lg object-cover" />
               ProjectPack
             </Link>
-            <div className="flex items-center gap-2">
-              <Link
-                to="/browser"
-                title="Import and store in this browser — no server needed"
-                className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100"
-              >
-                Browser Mode
-              </Link>
-            </div>
             {projectId && (
               <nav className="flex flex-wrap gap-1 text-sm">
                 <ProjectNavLink to={`/projects/${projectId}`}>Overview</ProjectNavLink>

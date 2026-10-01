@@ -482,15 +482,10 @@ router.post(
       .object({
         url: z.string().min(8),
         name: z.string().min(1).max(200).optional(),
-        // opt-out of video/audio downloads (much smaller, much faster import)
-        skipMedia: z.boolean().optional(),
       })
       .parse(req.body);
-    const { projectId, job, reused } = await analyzeWebsite(body.url, body.name, {
-      skipMedia: body.skipMedia,
-    });
-    // reused=true means an existing project for this site was refreshed
-    res.status(202).json({ projectId, jobId: job.id, job, reused });
+    const { projectId, job } = await analyzeWebsite(body.url, body.name);
+    res.status(202).json({ projectId, jobId: job.id, job });
   }),
 );
 

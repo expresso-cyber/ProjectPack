@@ -129,25 +129,3 @@ the finished prompt is sent to the provider.
 CSS, a robots.txt-disallowed page) and asserts the full journey: crawl →
 scan → images listing (alt text, source URLs) → raw bytes → images ZIP →
 extraction-enriched dimensions → prompt with image manifest → AI status.
-
-## Speed, memory and re-imports (v0.6.0)
-
-- **Streamed downloads**: every file is streamed straight to disk and hashed
-  as the bytes arrive. Nothing is buffered whole in memory, so a large site no
-  longer risks exhausting a small host (this was the cause of free-tier
-  instance restarts on 512 MB).
-- **Hash-on-download**: the SHA-256 computed during the crawl is reused by the
-  scan phase, so the "hashing" pass only touches new/changed files.
-- **Keep-alive connections**: one pooled HTTP agent is reused across the
-  hundreds of requests a crawl makes.
-- **Skip heavy media**: the import form has a "skip video/audio" toggle for a
-  much smaller, much faster import; skipped files are counted in the result.
-- **Re-imports refresh the existing project** instead of creating a duplicate:
-  files the server reports unchanged come back as HTTP 304 and are neither
-  re-downloaded nor re-hashed, while already-extracted content is preserved.
-  This also recovers assets that failed the first time.
-- **Live counters**: the progress bar shows "N pages · M assets · X MB"
-  during the crawl and "Indexing files — n/m" during the scan.
-- **Lost-job handling**: if the API restarts mid-import the UI stops polling
-  (no more endless 404s) and tells you to re-import.
-

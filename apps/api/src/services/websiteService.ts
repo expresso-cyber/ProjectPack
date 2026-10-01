@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { once } from 'node:events';
 import { Agent, ProxyAgent } from 'undici';
 import * as cheerio from 'cheerio';
 import type { JobRecord, WebsiteAssetInfo } from '@projectpack/shared';
@@ -29,14 +28,7 @@ import { AppError } from '../utils/errors.js';
 const proxyUrl =
   process.env.HTTPS_PROXY ?? process.env.https_proxy ?? process.env.HTTP_PROXY ?? process.env.http_proxy;
 // A direct agent lets loopback (tests, local dev) bypass any configured proxy.
-// Keep-alive is on explicitly: a crawl makes hundreds of requests to the same
-// host, and reusing the TLS connection instead of reconnecting each time is a
-// large speed win.
-const directAgent = new Agent({
-  keepAliveTimeout: 60_000,
-  keepAliveMaxTimeout: 300_000,
-  connections: 32,
-});
+const directAgent = new Agent();
 const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : null;
 
 function isLocalHost(hostname: string): boolean {
@@ -49,53 +41,21 @@ function isLocalHost(hostname: string): boolean {
 }
 
 function dispatcherFor(url: URL): unknown {
-  if (!proxyAgent) return directAgent;
+  if (!proxyAgent) return undefined;
   return isLocalHost(url.hostname) ? directAgent : proxyAgent;
 }
 
-/**
- * Some hosts block datacenter IPs (or answer 403/451 to non-browser clients).
- * When a fallback proxy template is configured, retry through it — it comes
- * from a different IP, which usually succeeds. Disable by setting
- * WEBSITE_FALLBACK_PROXY to an empty string.
- */
-function canUseFallback(url: URL): boolean {
-  return Boolean(env.websiteFallbackProxy) && !isLocalHost(url.hostname);
-}
-
-async function fetchViaFallbackProxy(url: URL): Promise<Response> {
-  const template = env.websiteFallbackProxy as string;
-  const proxied = template.replace('{url}', encodeURIComponent(url.toString()));
-  return fetch(proxied, {
-    redirect: 'follow',
-    signal: AbortSignal.timeout(env.websiteTimeoutMs),
-    headers: { 'User-Agent': env.websiteUserAgent },
-  });
-}
-
-async function politeFetch(url: URL, extraHeaders: Record<string, string> = {}): Promise<Response> {
+async function politeFetch(url: URL): Promise<Response> {
   const init: RequestInit = {
     redirect: 'follow',
     signal: AbortSignal.timeout(env.websiteTimeoutMs),
     headers: {
-      'User-Agent': env.websiteUserAgent,
+      'User-Agent': 'ProjectPack/0.3 (+website-import)',
       Accept: 'text/html,application/xhtml+xml,text/css,*/*;q=0.8',
-      ...extraHeaders,
     },
   };
   const dispatcher = dispatcherFor(url);
-  let res: Response;
-  try {
-    res = await fetch(url, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
-  } catch (err) {
-    if (!canUseFallback(url)) throw err;
-    return await fetchViaFallbackProxy(url);
-  }
-  if ((res.status === 403 || res.status === 451) && canUseFallback(url)) {
-    const proxied = await fetchViaFallbackProxy(url).catch(() => null);
-    if (proxied && proxied.ok) return proxied;
-  }
-  return res;
+  return fetch(url, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.avif', '.bmp', '.tiff']);
@@ -161,69 +121,6 @@ interface CrawlStats {
   failed: number;
   truncated: boolean;
   failures: FetchFailure[];
-  /** files actually present in the mirror (written or reused via 304) */
-  saved: number;
-  /** files kept from a previous import because the server said 304 */
-  unchanged: number;
-  /** heavy media files skipped because the user asked to skip them */
-  skippedMedia: number;
-}
-
-/** What we know about a file from a previous import of the same site. */
-export interface PreviousAsset {
-  relativePath: string;
-  url?: string;
-  contentType?: string;
-  alt?: string;
-  hash?: string;
-  size?: number;
-  etag?: string;
-  lastModified?: string;
-}
-
-/** True for video/audio URLs (skipped when the user opts out of heavy media). */
-function isMediaUrl(url: URL): boolean {
-  return MEDIA_EXTENSIONS.has(extensionForUrl(url));
-}
-
-/**
- * Stream a response body straight to disk, hashing as the bytes arrive.
- * Nothing is ever buffered whole in memory — this is what keeps a large
- * crawl from exhausting a small host's RAM.
- */
-async function streamToFile(
-  body: ReadableStream<Uint8Array>,
-  absPath: string,
-  hash: crypto.Hash,
-  limits: { maxFileBytes: number; remainingTotal: number },
-): Promise<{ size: number } | { tooBig: true } | { failed: true }> {
-  const out = fs.createWriteStream(absPath);
-  const reader = body.getReader();
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > limits.maxFileBytes || size > limits.remainingTotal) {
-        await reader.cancel().catch(() => undefined);
-        out.destroy();
-        return { tooBig: true };
-      }
-      hash.update(value);
-      if (!out.write(Buffer.from(value))) {
-        await once(out, 'drain');
-      }
-    }
-    await new Promise<void>((resolve, reject) => {
-      out.end(() => resolve());
-      out.on('error', reject);
-    });
-    return { size };
-  } catch {
-    out.destroy();
-    return { failed: true };
-  }
 }
 
 function normalizeKey(url: URL): string {
@@ -267,14 +164,11 @@ function sleep(ms: number): Promise<void> {
  * Retry-After when present. Parallel crawls can trip bot protection —
  * backing off once usually recovers the asset instead of losing it.
  */
-async function fetchWithRetry(
-  url: URL,
-  headers: Record<string, string> = {},
-): Promise<{ ok: true; res: Response } | { ok: false; status?: number }> {
+async function fetchWithRetry(url: URL): Promise<{ ok: true; res: Response } | { ok: false; status?: number }> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let res: Response;
     try {
-      res = await politeFetch(url, headers);
+      res = await politeFetch(url);
     } catch {
       return { ok: false }; // network error / timeout
     }
@@ -473,35 +367,15 @@ function isAssetCandidate(url: URL): boolean {
 async function crawl(
   seed: URL,
   dest: string,
-  report: (completed: number, total: number, failed?: number, detail?: string) => void,
-  opts: { skipMedia?: boolean; previous?: Map<string, PreviousAsset> } = {},
-): Promise<{ stats: CrawlStats; assets: WebsiteAssetInfo[]; knownHashes: Map<string, string> }> {
+  report: (completed: number, total: number) => void,
+): Promise<{ stats: CrawlStats; assets: WebsiteAssetInfo[] }> {
   const startHost = bareHost(seed.hostname);
   const seen = new Set<string>();
   const usedPaths = new Set<string>();
   const saved = new Map<string, string>(); // url key -> relative path
   const assetInfos: WebsiteAssetInfo[] = [];
-  const stats: CrawlStats = {
-    pages: 0,
-    assets: 0,
-    images: 0,
-    bytes: 0,
-    failed: 0,
-    truncated: false,
-    failures: [],
-    saved: 0,
-    unchanged: 0,
-    skippedMedia: 0,
-  };
+  const stats: CrawlStats = { pages: 0, assets: 0, images: 0, bytes: 0, failed: 0, truncated: false, failures: [] };
   const budget = env.websiteMaxPages + env.websiteMaxAssets;
-  // The mirror directory must exist even when every fetch fails: the scan
-  // engine validates the source root before reading it, and a missing folder
-  // used to surface as the confusing "Source root is not accessible".
-  fs.mkdirSync(dest, { recursive: true });
-  // Hashes computed while downloading — the scan phase reuses them instead of
-  // re-reading every file off disk.
-  const knownHashes = new Map<string, string>();
-  const previous = opts.previous ?? new Map<string, PreviousAsset>();
 
   // Every failed download is recorded (capped) so the UI can tell the user
   // exactly what could not be fetched and why — a crawl that silently loses
@@ -525,29 +399,7 @@ async function crawl(
   }
   const queue: QueueItem[] = [{ url: seed, kind: 'page', depth: 0 }];
 
-  const recordProgress = () => {
-    const mb = (stats.bytes / (1024 * 1024)).toFixed(1);
-    const parts = [`${stats.pages} pages`, `${stats.assets} assets`, `${mb} MB`];
-    if (stats.unchanged > 0) parts.push(`${stats.unchanged} unchanged`);
-    if (stats.failed > 0) parts.push(`${stats.failed} failed`);
-    report(Math.min(stats.pages + stats.assets, budget), budget, undefined, parts.join(' · '));
-  };
-
-  /** Register an asset (merging alt text when the same file is seen twice). */
-  const rememberAsset = (
-    rel: string,
-    url: URL,
-    contentType: string,
-    alt: string | undefined,
-    meta: Pick<WebsiteAssetInfo, 'hash' | 'size' | 'etag' | 'lastModified'>,
-  ) => {
-    const existing = assetInfos.find((a) => a.relativePath === rel);
-    if (existing) {
-      if (alt && !existing.alt) existing.alt = alt;
-      return;
-    }
-    assetInfos.push({ relativePath: rel, url: url.toString(), contentType, alt, ...meta });
-  };
+  const recordProgress = () => report(Math.min(stats.pages + stats.assets, budget), budget);
 
   /**
    * Fetch one asset; stylesheets and scripts are parsed (bounded depth) so
@@ -575,110 +427,50 @@ async function crawl(
   };
 
   const fetchAndSave = async (url: URL, alt?: string): Promise<{ html: string | null; contentType: string } | null> => {
-    const key = normalizeKey(url);
-    const prev = previous.get(key);
-    // Conditional request: if we already have this file from an earlier
-    // import, ask the server whether it changed. A 304 means we skip the
-    // download AND the hash entirely — re-imports become seconds.
-    // Validators are only sent when the local copy still exists (the disk is
-    // ephemeral on small hosts — a 304 with no local file would lose it).
-    const prevPath = prev ? path.join(dest, prev.relativePath) : '';
-    const havePrev = Boolean(prev && fs.existsSync(prevPath));
-    const validators: Record<string, string> = {};
-    if (havePrev && prev?.etag) validators['if-none-match'] = prev.etag;
-    if (havePrev && prev?.lastModified) validators['if-modified-since'] = prev.lastModified;
-
-    const outcome = await fetchWithRetry(url, validators);
+    const outcome = await fetchWithRetry(url);
     if (!outcome.ok) {
       recordFailure(url, outcome.status);
       recordProgress();
       return null;
     }
     const res = outcome.res;
-    const contentType = res.headers.get('content-type') ?? '';
-
-    if (res.status === 304 && prev && havePrev) {
-      const abs = path.join(dest, prev.relativePath);
-      if (fs.existsSync(abs)) {
-        const effectiveType = prev.contentType ?? contentType;
-        const isHtmlPage =
-          effectiveType.includes('text/html') || effectiveType.includes('application/xhtml');
-        saved.set(key, prev.relativePath);
-        stats.bytes += prev.size ?? 0;
-        stats.saved += 1;
-        stats.unchanged += 1;
-        if (prev.hash) knownHashes.set(prev.relativePath, prev.hash);
-        if (IMAGE_EXTENSIONS.has(path.extname(prev.relativePath))) {
-          stats.images += 1;
-          rememberAsset(prev.relativePath, url, effectiveType, alt, {
-            hash: prev.hash,
-            size: prev.size,
-            etag: prev.etag,
-            lastModified: prev.lastModified,
-          });
-        }
-        recordProgress();
-        if (env.websiteRequestDelayMs > 0) await sleep(env.websiteRequestDelayMs);
-        // Pages still need their HTML parsed to discover links/assets.
-        return {
-          html: isHtmlPage ? fs.readFileSync(abs, 'utf8') : null,
-          contentType: effectiveType,
-        };
-      }
-    }
-
-    if (!res.ok || !res.body) {
+    if (!res.ok) {
       recordFailure(url, res.status);
       recordProgress();
       return null;
     }
-
+    const contentType = res.headers.get('content-type') ?? '';
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length > env.maxFileBytes || stats.bytes + buffer.length > env.websiteMaxTotalBytes) {
+      stats.truncated = true;
+      recordProgress();
+      return null;
+    }
     const extension = extensionFor(url, contentType);
     const isHtml = contentType.includes('text/html') || contentType.includes('application/xhtml');
     const effectiveExt = extension || (isHtml ? '.html' : '.bin');
     const rel = relativePathFor(url, effectiveExt, usedPaths);
     const abs = path.join(dest, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
-
-    const hash = crypto.createHash('sha256');
-    const written = await streamToFile(res.body, abs, hash, {
-      maxFileBytes: env.maxFileBytes,
-      remainingTotal: Math.max(0, env.websiteMaxTotalBytes - stats.bytes),
-    });
-    if ('tooBig' in written) {
-      stats.truncated = true;
-      fs.rmSync(abs, { force: true });
-      recordProgress();
-      return null;
-    }
-    if ('failed' in written) {
-      fs.rmSync(abs, { force: true });
-      recordFailure(url);
-      recordProgress();
-      return null;
-    }
-
-    const digest = hash.digest('hex');
-    stats.bytes += written.size;
-    stats.saved += 1;
-    saved.set(key, rel);
-    knownHashes.set(rel, digest);
+    fs.writeFileSync(abs, buffer);
+    stats.bytes += buffer.length;
+    saved.set(normalizeKey(url), rel);
     if (IMAGE_EXTENSIONS.has(effectiveExt)) {
       stats.images += 1;
       // Same image can be referenced by an <img> tag (with alt text) and by
       // CSS (without) — merge so the alt text survives.
-      rememberAsset(rel, url, contentType, alt, {
-        hash: digest,
-        size: written.size,
-        etag: res.headers.get('etag') ?? undefined,
-        lastModified: res.headers.get('last-modified') ?? undefined,
-      });
+      const existing = assetInfos.find((a) => a.relativePath === rel);
+      if (existing) {
+        if (alt && !existing.alt) existing.alt = alt;
+      } else {
+        assetInfos.push({ relativePath: rel, url: url.toString(), contentType, alt });
+      }
     }
     recordProgress();
     // Politeness delay per request (per worker) — with the worker pool this
     // keeps the request rate reasonable while fetching in parallel.
     if (env.websiteRequestDelayMs > 0) await sleep(env.websiteRequestDelayMs);
-    return { html: isHtml ? fs.readFileSync(abs, 'utf8') : null, contentType };
+    return { html: isHtml ? buffer.toString('utf8') : null, contentType };
   };
 
   /** Process one queue item: a page (parse + discover) or an asset (save). */
@@ -686,13 +478,6 @@ async function crawl(
     const key = normalizeKey(item.url);
     if (seen.has(key)) return;
     if (robotsBlocks(item.url)) return;
-    // Opt-out of heavy media (video/audio): skipped before it ever enters the
-    // queue or counts against the byte budget.
-    if (opts.skipMedia && item.kind === 'asset' && isMediaUrl(item.url)) {
-      seen.add(key);
-      stats.skippedMedia += 1;
-      return;
-    }
 
     if (item.kind === 'page' && isPageCandidate(item.url, startHost, true) && stats.pages < env.websiteMaxPages) {
       seen.add(key);
@@ -741,20 +526,11 @@ async function crawl(
   };
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  return { stats, assets: assetInfos, knownHashes };
+  return { stats, assets: assetInfos };
 }
 
-/** Import + scan a live website into a project (same pipeline as GitHub). */
-export interface WebsiteImportOptions {
-  /** skip video/audio files entirely (much smaller, much faster import) */
-  skipMedia?: boolean;
-}
-
-export async function analyzeWebsite(
-  rawUrl: string,
-  name?: string,
-  options: WebsiteImportOptions = {},
-): Promise<{ projectId: string; job: JobRecord; reused: boolean }> {
+/** Import + scan a live website into a new project (same pipeline as GitHub). */
+export async function analyzeWebsite(rawUrl: string, name?: string): Promise<{ projectId: string; job: JobRecord }> {
   let seed: URL;
   try {
     seed = new URL(rawUrl.trim());
@@ -768,37 +544,12 @@ export async function analyzeWebsite(
     throw new AppError('WEBSITE_ERROR', 'The URL has no hostname', 400);
   }
 
-  const sourceLabel = seed.origin + (seed.pathname !== '/' ? seed.pathname : '');
-
-  // Re-importing a site we already have REFRESHES that project instead of
-  // creating a duplicate: files the server reports unchanged come back as 304
-  // (not re-downloaded, not re-hashed) and the rescan keeps already-extracted
-  // content. This also recovers assets that failed on the first attempt.
-  const existing = store
-    .listProjects()
-    .find((p) => p.sourceType === 'website' && p.sourceLabel === sourceLabel && p.rootPath);
-
-  const project =
-    existing ??
-    store.createProject({
-      name: name || bareHost(seed.hostname),
-      sourceType: 'website',
-      sourceLabel,
-      rootPath: '', // filled by the job below
-    });
-
-  // Validators from the previous import of this project (URL → asset info).
-  const previous = new Map<string, PreviousAsset>();
-  if (existing) {
-    for (const asset of store.getWebsiteAssets(existing.id)) {
-      if (!asset.url) continue;
-      try {
-        previous.set(normalizeKey(new URL(asset.url)), asset);
-      } catch {
-        /* stored URL no longer parses — treat as new */
-      }
-    }
-  }
+  const project = store.createProject({
+    name: name || bareHost(seed.hostname),
+    sourceType: 'website',
+    sourceLabel: seed.origin + (seed.pathname !== '/' ? seed.pathname : ''),
+    rootPath: '', // filled by the job below
+  });
 
   const job = jobManager.start(project.id, 'website-import', async ({ report }) => {
     const dest = path.join(env.dataDir, 'projects', project.id, 'source');
@@ -806,25 +557,15 @@ export async function analyzeWebsite(
     // work is still running: crawling maps to the first 70% of the bar,
     // the scan/hashing phase fills the remaining 30%.
     const budget = env.websiteMaxPages + env.websiteMaxAssets;
-    const crawlReport = (completed: number, _total: number, _failed?: number, detail?: string) => {
-      report(Math.min(Math.round(completed * 0.7), Math.round(budget * 0.7)), budget, 0, detail);
+    const crawlReport = (completed: number, total: number) => {
+      void total;
+      report(Math.min(Math.round(completed * 0.7), Math.round(budget * 0.7)), budget);
     };
-    const { stats, assets, knownHashes } = await crawl(seed, dest, crawlReport, {
-      skipMedia: options.skipMedia,
-      previous,
-    });
-    if (stats.saved === 0) {
-      // Nothing reached the mirror — say exactly why (status + first URL)
-      // instead of letting the scan fail with a cryptic path error.
-      const first = stats.failures[0];
-      const reason = first
-        ? `${first.status ?? 'network error'} on ${first.url}`
-        : 'no pages or assets were found';
+    const { stats, assets } = await crawl(seed, dest, crawlReport);
+    if (stats.pages === 0 && stats.assets === 0) {
       throw new AppError(
         'WEBSITE_ERROR',
-        `Could not download anything from ${seed.origin} (${reason}). The site may be ` +
-          'blocking automated access, rate-limiting, or behind authentication — try again in a ' +
-          'minute, or paste the URL from a different network.',
+        `Could not fetch anything from ${seed.origin} — the site may be down, blocking bots, or behind authentication`,
         502,
       );
     }
@@ -839,28 +580,22 @@ export async function analyzeWebsite(
 
     // Scan phase (70% → 100%): runs inline (not as a nested job) so its
     // progress feeds THIS job — the bar keeps moving while files are hashed
-    // and the job only completes when the scan is fully done. Hashes computed
-    // during the download are reused, so this phase only hashes what changed.
+    // and the job only completes when the scan is fully done.
     store.updateProject(project.id, { status: 'scanning' });
     try {
-      await scanWork(
-        project.id,
-        (completed, total, failed) => {
-          const detail = total > 0 ? `Indexing files — ${completed}/${total}` : 'Indexing files';
-          if (total > 0) {
-            report(Math.round(budget * (0.7 + 0.3 * (completed / total))), budget, failed, detail);
-          } else {
-            report(Math.round(budget * 0.95), budget, failed, detail);
-          }
-        },
-        { knownHashes },
-      );
+      await scanWork(project.id, (completed, total, failed) => {
+        if (total > 0) {
+          report(Math.round(budget * (0.7 + 0.3 * (completed / total))), budget, failed);
+        } else {
+          report(Math.round(budget * 0.95), budget, failed);
+        }
+      });
     } catch (err) {
       store.updateProject(project.id, { status: 'error' });
       throw err;
     }
-    return { ...stats, imported: true, reused: Boolean(existing) };
+    return { ...stats, imported: true };
   });
 
-  return { projectId: project.id, job, reused: Boolean(existing) };
+  return { projectId: project.id, job };
 }

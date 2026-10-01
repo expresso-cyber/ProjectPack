@@ -4,7 +4,7 @@ import { store } from '../services/store.js';
 import { logger } from '../utils/logger.js';
 
 export interface JobContext {
-  report: (completed: number, total: number, failed?: number, detail?: string) => void;
+  report: (completed: number, total: number, failed?: number) => void;
 }
 
 /**
@@ -34,11 +34,10 @@ export class JobManager {
   }
 
   private async execute<T>(job: JobRecord, work: (ctx: JobContext) => Promise<T>): Promise<T> {
-    const report = (completed: number, total: number, failed = 0, detail?: string) => {
+    const report = (completed: number, total: number, failed = 0) => {
       job.completed = completed;
       job.total = total;
       job.failed = failed;
-      if (detail !== undefined) job.detail = detail;
       job.progress = total > 0 ? Math.round((completed / total) * 100) : 100;
       store.saveJob(job);
     };
