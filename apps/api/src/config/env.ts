@@ -48,10 +48,18 @@ function int(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function list(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export const env = {
   port: int(process.env.PORT, 3001),
   nodeEnv: process.env.NODE_ENV ?? 'development',
   isTest: process.env.NODE_ENV === 'test',
+  frontendOrigins: list(process.env.FRONTEND_ORIGINS),
   // All generated data (metadata, extracted text, packages, downloads) lives
   // OUTSIDE the codebase by default so a repository folder never fills up with
   // analysis output. Override with DATA_DIR in .env.
