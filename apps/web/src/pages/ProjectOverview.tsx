@@ -26,7 +26,6 @@ export default function ProjectOverview() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState('');
   const [activeJob, setActiveJob] = useState<{ jobId: string; type: string } | null>(null);
-  const [excludeInput, setExcludeInput] = useState('');
   const [pillowHint, setPillowHint] = useState(false);
   // download failures already logged — avoids repeat console warnings on refresh
   const warnedFailures = useRef<Set<string>>(new Set());
@@ -48,10 +47,6 @@ export default function ProjectOverview() {
             );
           }
         }
-        setExcludeInput((prev) => {
-          const joined = (p as { excludeDirs?: string[] }).excludeDirs?.join(', ') ?? '';
-          return prev === joined ? prev : joined;
-        });
       })
       .catch((e) => setError(e.message));
   }, [projectId]);
@@ -132,12 +127,11 @@ export default function ProjectOverview() {
   async function run(type: 'scan' | 'extract' | 'duplicates') {
     setError('');
     try {
+      const storedExclusions =
+        (project as unknown as { excludeDirs?: string[] } | null)?.excludeDirs ?? [];
       const { jobId } =
         type === 'scan'
-          ? await api.scan(projectId, excludeInput
-              .split(',')
-              .map((x) => x.trim())
-              .filter(Boolean))
+          ? await api.scan(projectId, storedExclusions)
           : type === 'extract'
             ? await api.extract(projectId)
             : await api.analyzeDuplicates(projectId);
@@ -232,23 +226,6 @@ export default function ProjectOverview() {
           </button>
         </div>
       </div>
-
-      {project && (
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm">
-          <label className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span className="font-medium text-slate-800">Scan exclusions</span>
-            <input
-              className="min-w-64 flex-1 rounded-md border border-slate-300 px-2 py-1.5 font-mono text-xs"
-              placeholder="comma-separated folder names to skip, e.g. dist, coverage, assets"
-              value={excludeInput}
-              onChange={(e) => setExcludeInput(e.target.value)}
-            />
-            <span className="text-slate-400">
-              (node_modules, .git, __pycache__, venv, dist, build are always skipped)
-            </span>
-          </label>
-        </div>
-      )}
 
       {busy && job && (
         <div className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-4">

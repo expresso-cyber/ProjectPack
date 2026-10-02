@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { extensionBadge } from '../lib/format';
 
 export function FileIcon({ extension }: { extension?: string }) {
@@ -108,5 +108,60 @@ export function BackButton() {
     >
       ← Back
     </button>
+  );
+}
+
+/** Accessible-enough modal used for the page picker and the listed-links view. */
+export function Modal({
+  title,
+  onClose,
+  children,
+  footer,
+  wide,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  wide?: boolean;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 sm:items-center"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} rounded-lg border border-slate-200 bg-white shadow-xl`}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-slate-200 px-1.5 py-0.5 text-xs text-slate-400 transition hover:border-slate-300 hover:text-slate-700"
+            title="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-4 py-3">{children}</div>
+        {footer && (
+          <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">{footer}</div>
+        )}
+      </div>
+    </div>
   );
 }

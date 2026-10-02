@@ -158,3 +158,25 @@ matches from stored previews/extracted text, each with the matched field and a
 snippet. The UI debounces typing (250 ms) and opens the file when a suggestion
 is clicked.
 
+## Project structure (v0.5.7)
+
+A crawl is reorganised into the layout a static site actually has, and the
+links inside HTML/CSS are rewritten so the clone works offline:
+
+```
+index.html                 ← the landing page
+about.html                 ← other top-level pages
+pages/service.html         ← deeper pages keep their site path
+assets/css/*.css
+assets/js/*.js
+assets/images/*
+assets/fonts/*
+assets/media/*
+assets/files/*             ← everything else (json, xml, txt, …)
+```
+
+Host folders (the previous `c0.wp.com/…` style) are removed. Rewriting covers
+`href`, `src`, `srcset`/`data-bgset`, lazy-loading attributes, inline `style`
+and `<style>` blocks, plus `url()` and `@import` in stylesheets. References to
+files that were not downloaded (external links, blocked assets) are left as
+absolute URLs so they still work online.

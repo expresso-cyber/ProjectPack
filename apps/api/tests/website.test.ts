@@ -246,6 +246,45 @@ describe('website import pipeline', () => {
     expect(res.body.fileCount).toBeGreaterThan(0);
   });
 
+  it('reorganises the mirror into a real project structure with rewritten links', async () => {
+    const res = await request(app)
+      .post('/api/website/analyze')
+      .send({ url: baseUrl, name: 'Structured clone' });
+    expect(res.status).toBe(202);
+    const finished = await waitForJob(app, res.body.jobId);
+    expect(finished.status).toBe('completed');
+
+    const files = await request(app).get(`/api/projects/${res.body.projectId}/files`);
+    const list = files.body.files as { id: string; relativePath: string }[];
+    const paths = list.map((f) => f.relativePath);
+
+    // a real project layout — root page plus assets grouped by kind
+    expect(paths).toContain('index.html');
+    expect(paths).toContain('about.html');
+    expect(paths).toContain('assets/css/style.css');
+    expect(paths).toContain('assets/css/extra.css');
+    expect(paths).toContain('assets/js/app.js');
+    expect(paths).toContain('assets/images/logo.png');
+    expect(paths).toContain('assets/media/clip.mp4');
+    // nothing is filed under a hostname any more
+    expect(paths.some((p) => p.startsWith('127.0.0.1'))).toBe(false);
+
+    // the HTML now points at the new locations, so the clone actually works
+    const index = list.find((f) => f.relativePath === 'index.html');
+    const rawIndex = await request(app).get(`/api/projects/${res.body.projectId}/files/${index!.id}/raw`);
+    expect(rawIndex.text).toContain('assets/css/style.css');
+    expect(rawIndex.text).toContain('assets/js/app.js');
+    expect(rawIndex.text).toContain('assets/images/logo.png');
+    expect(rawIndex.text).not.toContain('href="/style.css"');
+    expect(rawIndex.text).not.toContain('src="/img/logo.png"');
+
+    // …and the stylesheet finds its images and imports through the new paths
+    const css = list.find((f) => f.relativePath === 'assets/css/style.css');
+    const rawCss = await request(app).get(`/api/projects/${res.body.projectId}/files/${css!.id}/raw`);
+    expect(rawCss.text).toContain('../images/wave.png');
+    expect(rawCss.text).toContain('extra.css');
+  });
+
   it('lists the page links found on the landing page (for the page picker)', async () => {
     const res = await request(app).post('/api/website/pages').send({ url: baseUrl });
     expect(res.status).toBe(200);

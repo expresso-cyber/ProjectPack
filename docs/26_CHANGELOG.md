@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.5.7 — Real project structure for website imports
+
+- **Website mirrors are reorganised into a real project layout.** Until now
+  every file was filed under its hostname (`c0.wp.com/c/7.1.2/wp-includes/…`,
+  `fonts.googleapis.com/css.css`, `facebook.com/…`) — faithful to the URLs, but
+  not a structure anyone would open. A crawl now produces:
+
+      index.html
+      about.html
+      pages/service.html          ← further pages keep their site path
+      assets/css/*.css
+      assets/js/*.js
+      assets/images/*
+      assets/fonts/*
+      assets/media/*
+      assets/files/*              ← everything else (json, xml, txt, …)
+
+  The host folders are gone, and the landing page always becomes `index.html`.
+- **Links are rewritten so the clone stays connected.** After moving the files,
+  every `href`/`src`/`srcset`/lazy-loading attribute, inline `style` and
+  `<style>` block in the HTML — and every `url()`/`@import` in the CSS — is
+  rewritten to the new relative path. So the pages link to each other, the
+  stylesheets find their images, and the ZIP produced by "Approve & create
+  package" is a working site, not a pile of files.
+- This applies everywhere the structure is shown (file tree, package preview,
+  report, prompt) because it happens when the site is imported.
+
+## 0.5.6 — Overview order corrected
+
+- The project overview keeps the **analysis (metric) cards first**, with the
+  navigation buttons (Browse file tree, Search content, …) **below** them —
+  the 0.5.5 reorder that put the buttons on top was the wrong reading of the
+  request and is reverted. The Scan-exclusions removal from 0.5.5 stays.
+
+## 0.5.5 — Page-link picker modal, layout cleanups, graceful wake-up
+
+- **Page links now open in a picker modal.** "Load page links" opens a pop-up
+  listing every link found on the site with a checkbox each, an **All** toggle
+  and a **Done** button (the links are no longer rendered inline where they
+  covered the card). After Done, the chosen links live behind a
+  **Listed links (N)** button, which opens a second pop-up showing them with an
+  ✕ per link and "clear all".
+- **Busy labels are scoped to the right card.** Starting a website crawl no
+  longer makes the GitHub button read "Importing…" — each card shows its own
+  state ("Crawling…" / "Importing…"); both stay disabled while an import runs.
+- **Project overview:** the **Scan exclusions** bar is gone (exclusions already
+  stored on a project are still applied on rescan), and the file-tree /
+  navigation links now sit **above** the analysis cards.
+- **Package page:** the **Created packages** section moved directly below the
+  analysis (the selected/unselected/size stats), above the file table, so
+  existing packages are visible without scrolling past the whole file list.
+- **Graceful wake-up.** When the API cannot be reached (a free instance that
+  has gone to sleep), the workspace now shows "Starting the demo server…" with
+  an automatic retry and a Retry button instead of a raw connection error.
+
 ## 0.5.4 — Page picker, search autocomplete, back-button fix
 
 Built on the version you are running (0.5.3).

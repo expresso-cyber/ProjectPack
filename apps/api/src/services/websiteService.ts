@@ -8,6 +8,7 @@ import { env } from '../config/env.js';
 import { store } from './store.js';
 import { jobManager } from '../jobs/jobManager.js';
 import { scanWork } from './scanService.js';
+import { reorganizeMirror, type MirrorFile } from './mirrorStructure.js';
 import { AppError } from '../utils/errors.js';
 
 /**
@@ -21,8 +22,9 @@ import { AppError } from '../utils/errors.js';
  *   captured, the same behaviour extract.pics offers but without a paid API.
  * - robots.txt is respected (best effort) and requests are rate-delayed.
  * - Everything is bounded: max pages, max assets, total bytes, per-request
- *   timeout. The HTML is stored byte-for-byte (URLs are NOT rewritten) so AI
- *   agents see the real source.
+ *   timeout. After the crawl the mirror is reorganised into a real project
+ *   structure (index.html, pages/, assets/css|js|images|fonts) and the
+ *   references inside HTML/CSS are rewritten so the clone stays connected.
  */
 
 const proxyUrl =
@@ -369,12 +371,15 @@ async function crawl(
   dest: string,
   report: (completed: number, total: number) => void,
   opts: { pages?: URL[] } = {},
-): Promise<{ stats: CrawlStats; assets: WebsiteAssetInfo[] }> {
+): Promise<{ stats: CrawlStats; assets: WebsiteAssetInfo[]; mirrorFiles: MirrorFile[] }> {
   const startHost = bareHost(seed.hostname);
   const seen = new Set<string>();
   const usedPaths = new Set<string>();
   const saved = new Map<string, string>(); // url key -> relative path
   const assetInfos: WebsiteAssetInfo[] = [];
+  // every file we save, so the mirror can be reorganised into a real project
+  // structure (index.html, pages/, assets/css|js|images|fonts) afterwards
+  const mirrorFiles: MirrorFile[] = [];
   const stats: CrawlStats = { pages: 0, assets: 0, images: 0, bytes: 0, failed: 0, truncated: false, failures: [] };
   const budget = env.websiteMaxPages + env.websiteMaxAssets;
 
@@ -463,6 +468,7 @@ async function crawl(
     fs.writeFileSync(abs, buffer);
     stats.bytes += buffer.length;
     saved.set(normalizeKey(url), rel);
+    mirrorFiles.push({ urlKey: normalizeKey(url), url: url.toString(), oldPath: rel, isPage: isHtml });
     if (IMAGE_EXTENSIONS.has(effectiveExt)) {
       stats.images += 1;
       // Same image can be referenced by an <img> tag (with alt text) and by
@@ -542,7 +548,7 @@ async function crawl(
   };
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  return { stats, assets: assetInfos };
+  return { stats, assets: assetInfos, mirrorFiles };
 }
 
 function parseSeedUrl(rawUrl: string): URL {
@@ -636,7 +642,7 @@ export async function analyzeWebsite(
       void total;
       report(Math.min(Math.round(completed * 0.7), Math.round(budget * 0.7)), budget);
     };
-    const { stats, assets } = await crawl(
+    const { stats, assets, mirrorFiles } = await crawl(
       seed,
       dest,
       crawlReport,
@@ -658,7 +664,13 @@ export async function analyzeWebsite(
       // links) instead of the mirror quietly missing files.
       importFailures: stats.failures,
     });
-    store.saveWebsiteAssets(project.id, assets);
+    // Turn the URL mirror into a real project structure and rewrite the links
+    // inside HTML/CSS so the clone stays connected, then record the new paths.
+    const { moved } = reorganizeMirror(dest, mirrorFiles, normalizeKey);
+    store.saveWebsiteAssets(
+      project.id,
+      assets.map((asset) => ({ ...asset, relativePath: moved.get(asset.relativePath) ?? asset.relativePath })),
+    );
 
     // Scan phase (70% → 100%): runs inline (not as a nested job) so its
     // progress feeds THIS job — the bar keeps moving while files are hashed

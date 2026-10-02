@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import type { ProjectSummary, JobRecord } from '@projectpack/shared';
-import { EmptyState, ErrorBanner, ProgressBar, Skeleton, StatCard } from '../components/ui';
+import { EmptyState, ErrorBanner, Modal, ProgressBar, Skeleton, StatCard } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { useJobProgress } from '../hooks/useJobProgress';
 import { formatBytes, formatDate } from '../lib/format';
@@ -19,19 +19,42 @@ export default function Home() {
   // selective website import: pick specific pages instead of crawling everything
   const [sitePages, setSitePages] = useState<string[]>([]);
   const [selectedPages, setSelectedPages] = useState<string[]>([]);
-  const [pageQuery, setPageQuery] = useState('');
   const [loadingPages, setLoadingPages] = useState(false);
-  const [showPageList, setShowPageList] = useState(false);
+  // the picker modal (checkbox list) and the "listed links" modal
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [listedOpen, setListedOpen] = useState(false);
+  const [tempSelection, setTempSelection] = useState<string[]>([]);
+  const [pickerQuery, setPickerQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importProjectId, setImportProjectId] = useState('');
   const [importKind, setImportKind] = useState<'github' | 'website'>('github');
+  // The free hosting plan sleeps when idle and takes ~a minute to wake. Rather
+  // than showing an error to a first-time visitor, keep retrying and explain.
+  const [wakingUp, setWakingUp] = useState(false);
 
   useEffect(() => {
-    api
-      .listProjects()
-      .then(setProjects)
-      .catch((e) => setError(e.message));
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const load = async () => {
+      try {
+        const list = await api.listProjects();
+        if (cancelled) return;
+        setProjects(list);
+        setWakingUp(false);
+      } catch {
+        if (cancelled) return;
+        setWakingUp(true);
+        timer = window.setTimeout(() => void load(), 4000);
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
   }, []);
 
   async function deleteProject(project: ProjectSummary) {
@@ -132,12 +155,14 @@ export default function Home() {
     }
   }
 
-  const pageMatches = useMemo(() => {
-    const needle = pageQuery.trim().toLowerCase();
-    const pool = sitePages.filter((url) => !selectedPages.includes(url));
-    const list = needle ? pool.filter((url) => url.toLowerCase().includes(needle)) : pool;
-    return list.slice(0, 8);
-  }, [pageQuery, sitePages, selectedPages]);
+  /** Links shown inside the picker, filtered by the modal's search box. */
+  const pickerMatches = useMemo(() => {
+    const needle = pickerQuery.trim().toLowerCase();
+    return needle ? sitePages.filter((url) => url.toLowerCase().includes(needle)) : sitePages;
+  }, [pickerQuery, sitePages]);
+
+  const allPickerSelected =
+    sitePages.length > 0 && sitePages.every((url) => tempSelection.includes(url));
 
   async function loadSitePages() {
     if (!websiteUrl.trim()) {
@@ -148,12 +173,10 @@ export default function Home() {
     try {
       const { pages } = await api.listSitePages(websiteUrl.trim());
       setSitePages(pages);
-      setShowPageList(true);
-      notify(
-        'success',
-        'Page links loaded',
-        pages.length > 0 ? `${pages.length} link(s) found — pick the pages you need.` : 'No page links found on that page.',
-      );
+      setTempSelection(selectedPages.filter((url) => pages.includes(url)));
+      setPickerQuery('');
+      setPickerOpen(true);
+      if (pages.length === 0) notify('info', 'No page links found', 'That page does not link to any other pages.');
     } catch (e) {
       notify('error', 'Could not list pages', (e as Error).message);
     } finally {
@@ -161,8 +184,16 @@ export default function Home() {
     }
   }
 
-  function togglePage(url: string) {
-    setSelectedPages((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
+  function toggleTemp(url: string) {
+    setTempSelection((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
+  }
+
+  function toggleAllPages() {
+    setTempSelection(allPickerSelected ? [] : [...sitePages]);
+  }
+
+  function removeSelected(url: string) {
+    setSelectedPages((prev) => prev.filter((u) => u !== url));
   }
 
   async function importWebsite() {
@@ -181,7 +212,7 @@ export default function Home() {
       setWebsiteName('');
       setSitePages([]);
       setSelectedPages([]);
-      setPageQuery('');
+      setPickerQuery('');
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -198,6 +229,26 @@ export default function Home() {
           Scan a local project folder or import a public GitHub repository, then search, analyze, and package it.
         </p>
       </section>
+
+      {wakingUp && projects === null && (
+        <section className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+            <strong>Starting the demo server…</strong>
+          </div>
+          <p className="mt-1 text-xs text-amber-800">
+            This free hosting plan sleeps after 15 minutes of inactivity and takes about a minute to wake up. This page
+            retries automatically — no need to reload.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+          >
+            Retry now
+          </button>
+        </section>
+      )}
 
       {error && <ErrorBanner message={error} />}
 
@@ -254,7 +305,7 @@ export default function Home() {
             className="mt-3 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
             disabled={busy || importing}
           >
-            {importing ? 'Importing…' : 'Import and analyze'}
+            {importing && importKind === 'github' ? 'Importing…' : 'Import and analyze'}
           </button>
           {importing && importKind === 'github' && (
             <p className="mt-3 text-xs text-slate-400">
@@ -291,86 +342,33 @@ export default function Home() {
           />
 
           <div className="mt-3 rounded-md border border-slate-200 bg-slate-50/50 p-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-slate-700">Pages to crawl (optional)</span>
+            <span className="text-xs font-medium text-slate-700">Pages to crawl (optional)</span>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Leave empty to crawl the whole site (up to 30 pages). Load the site's page links and tick only the ones
+              you need — handy when a task asks for just a few pages.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => void loadSitePages()}
                 disabled={importing || loadingPages}
-                className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 {loadingPages ? 'Loading…' : 'Load page links'}
               </button>
-            </div>
-            <p className="mt-1 text-[11px] text-slate-500">
-              Leave empty to crawl the whole site (up to 30 pages). Pick specific pages to fetch only those — handy
-              when you only need a few pages of a site.
-            </p>
-            <div className="relative mt-2">
-              <input
-                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs"
-                placeholder={sitePages.length ? 'Type to search the loaded page links…' : 'Load page links first'}
-                value={pageQuery}
-                onChange={(e) => {
-                  setPageQuery(e.target.value);
-                  setShowPageList(true);
-                }}
-                onFocus={() => setShowPageList(true)}
-                disabled={importing || sitePages.length === 0}
-              />
-              {showPageList && pageMatches.length > 0 && (
-                <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
-                  {pageMatches.map((url) => (
-                    <li key={url}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          togglePage(url);
-                          setPageQuery('');
-                        }}
-                        className="block w-full truncate px-2 py-1.5 text-left font-mono text-[11px] text-slate-700 transition hover:bg-indigo-50"
-                        title={url}
-                      >
-                        {url}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <button
+                type="button"
+                onClick={() => setListedOpen(true)}
+                disabled={selectedPages.length === 0}
+                className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50"
+              >
+                Listed links ({selectedPages.length})
+              </button>
             </div>
             {selectedPages.length > 0 && (
-              <>
-                <div className="mt-2 flex flex-wrap items-center gap-1">
-                  {selectedPages.map((url) => (
-                    <span
-                      key={url}
-                      className="inline-flex max-w-full items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
-                    >
-                      <span className="truncate" title={url}>
-                        {url.replace(/^https?:\/\//, '')}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => togglePage(url)}
-                        className="text-indigo-500 transition hover:text-indigo-800"
-                        title="Remove"
-                      >
-                        ✕
-                      </button>
-                    </span>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPages([])}
-                    className="text-[11px] text-slate-400 underline"
-                  >
-                    clear all
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-emerald-700">
-                  Only these {selectedPages.length} page(s) will be fetched — plus the images, CSS and scripts they use.
-                </p>
-              </>
+              <p className="mt-2 text-[11px] text-emerald-700">
+                Only these {selectedPages.length} page(s) will be fetched — plus the images, CSS and scripts they use.
+              </p>
             )}
           </div>
           <button
@@ -472,6 +470,119 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {pickerOpen && (
+        <Modal
+          title={`Page links found (${sitePages.length})`}
+          wide
+          onClose={() => setPickerOpen(false)}
+          footer={
+            <>
+              <span className="mr-auto text-xs text-slate-500">
+                {tempSelection.length} of {sitePages.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(false)}
+                className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPages(tempSelection);
+                  setPickerOpen(false);
+                }}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Done
+              </button>
+            </>
+          }
+        >
+          <input
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs"
+            placeholder="Filter these links…"
+            value={pickerQuery}
+            onChange={(e) => setPickerQuery(e.target.value)}
+            autoFocus
+          />
+          <label className="mt-3 flex items-center gap-2 border-b border-slate-100 pb-2 text-sm font-medium text-slate-800">
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={allPickerSelected}
+              onChange={toggleAllPages}
+            />
+            All pages
+          </label>
+          <ul className="mt-1 divide-y divide-slate-50">
+            {pickerMatches.map((url) => (
+              <li key={url}>
+                <label className="flex items-start gap-2 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={tempSelection.includes(url)}
+                    onChange={() => toggleTemp(url)}
+                  />
+                  <span className="min-w-0 flex-1 break-all font-mono text-xs text-slate-700">{url}</span>
+                </label>
+              </li>
+            ))}
+            {pickerMatches.length === 0 && (
+              <li className="py-4 text-center text-xs text-slate-400">No links match that filter.</li>
+            )}
+          </ul>
+        </Modal>
+      )}
+
+      {listedOpen && (
+        <Modal
+          title={`Listed links (${selectedPages.length})`}
+          onClose={() => setListedOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedPages([])}
+                className="mr-auto text-xs text-slate-500 underline"
+              >
+                clear all
+              </button>
+              <button
+                type="button"
+                onClick={() => setListedOpen(false)}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+              >
+                Done
+              </button>
+            </>
+          }
+        >
+          <ul className="divide-y divide-slate-100">
+            {selectedPages.map((url) => (
+              <li key={url} className="flex items-start gap-2 py-2">
+                <span className="min-w-0 flex-1 break-all font-mono text-xs text-slate-700">{url}</span>
+                <button
+                  type="button"
+                  onClick={() => removeSelected(url)}
+                  title="Remove this link"
+                  className="rounded-md border border-slate-200 px-1.5 py-0.5 text-xs text-slate-400 transition hover:border-red-300 hover:text-red-600"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+            {selectedPages.length === 0 && (
+              <li className="py-4 text-center text-xs text-slate-400">
+                No links listed — load page links and tick the ones you need.
+              </li>
+            )}
+          </ul>
+        </Modal>
+      )}
 
       {projects && projects.length > 0 && (
         <section className="grid gap-4 md:grid-cols-4">

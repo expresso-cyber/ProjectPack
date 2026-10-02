@@ -242,6 +242,52 @@ export default function PackagePage() {
             <StatCard label="Package size" value={formatBytes(selectedSize)} />
           </div>
 
+        </>
+      )}
+
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Created packages</h2>
+        {packages.length === 0 ? (
+          <EmptyState
+            title="No packages yet"
+            description="Approve the preview above to create your first package. Each package includes a SHA-256 manifest."
+          />
+        ) : (
+          <div className="space-y-2">
+            {packages.map((pkg) => (
+              <div
+                key={pkg.packageId}
+                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm"
+              >
+                <span className="font-mono text-xs text-slate-600">{pkg.packageId}</span>
+                <span className="text-xs text-slate-400">
+                  {pkg.fileCount} files · {formatBytes(pkg.totalSize ?? 0)} · {formatDate(pkg.createdAt)}
+                </span>
+                <div className="ml-auto flex gap-2">
+                  <a
+                    href={`/api/projects/${projectId}/package/${pkg.packageId}/manifest`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    Manifest
+                  </a>
+                  <button
+                    onClick={() => void downloadPackage(pkg)}
+                    disabled={downloading === pkg.packageId}
+                    className="rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {downloading === pkg.packageId ? 'Downloading…' : 'Download ZIP'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {preview && (
+        <>
           <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
@@ -341,46 +387,6 @@ export default function PackagePage() {
         </>
       )}
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">Created packages</h2>
-        {packages.length === 0 ? (
-          <EmptyState
-            title="No packages yet"
-            description="Approve the preview above to create your first package. Each package includes a SHA-256 manifest."
-          />
-        ) : (
-          <div className="space-y-2">
-            {packages.map((pkg) => (
-              <div
-                key={pkg.packageId}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm"
-              >
-                <span className="font-mono text-xs text-slate-600">{pkg.packageId}</span>
-                <span className="text-xs text-slate-400">
-                  {pkg.fileCount} files · {formatBytes(pkg.totalSize ?? 0)} · {formatDate(pkg.createdAt)}
-                </span>
-                <div className="ml-auto flex gap-2">
-                  <a
-                    href={`/api/projects/${projectId}/package/${pkg.packageId}/manifest`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
-                  >
-                    Manifest
-                  </a>
-                  <button
-                    onClick={() => void downloadPackage(pkg)}
-                    disabled={downloading === pkg.packageId}
-                    className="rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
-                  >
-                    {downloading === pkg.packageId ? 'Downloading…' : 'Download ZIP'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
   );
 }
