@@ -1,0 +1,61 @@
+# ProjectPack Render Blueprint
+#
+# Frontend: Render Static Site (CDN)
+# API: Render Web Service
+#
+# Set VITE_API_URL on the static site to the API URL without /api.
+# Set FRONTEND_ORIGINS on the API to the exact static-site origin.
+# Both are sync:false because they are environment-specific.
+
+services:
+  - type: web
+    runtime: static
+    name: projectpack-web
+    buildCommand: npm ci && npm run build -w @projectpack/shared && npm run build -w @projectpack/web
+    staticPublishPath: apps/web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
+  - type: web
+    runtime: node
+    name: projectpack-api
+    plan: free
+    buildCommand: npm ci && npm run install:python && npm run build -w @projectpack/shared && npm run build -w @projectpack/api
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: PYTHON_BIN
+        value: python3
+      - key: PYTHON_ENGINE_PATH
+        value: python/file_engine
+      - key: MAX_FILES
+        value: "20000"
+      - key: MAX_FILE_BYTES
+        value: "52428800"
+      - key: WEBSITE_MAX_PAGES
+        value: "30"
+      - key: WEBSITE_MAX_ASSETS
+        value: "400"
+      - key: WEBSITE_MAX_TOTAL_BYTES
+        value: "104857600"
+      - key: WEBSITE_TIMEOUT_MS
+        value: "20000"
+      - key: WEBSITE_REQUEST_DELAY_MS
+        value: "100"
+      - key: WEBSITE_CONCURRENCY
+        value: "6"
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: AI_MODEL
+        value: gpt-4o-mini
