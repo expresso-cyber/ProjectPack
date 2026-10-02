@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, exportApi } from '../services/api';
+import { api, apiUrl, exportApi } from '../services/api';
 import type { ProjectDetail } from '../services/api';
 import type { FileRecord, JobRecord } from '@projectpack/shared';
 import { ErrorBanner, SkeletonCards, ProgressBar } from '../components/ui';
@@ -357,7 +357,7 @@ function ExportPanel({ projectId, extractedCount }: { projectId: string; extract
       if (result.downloadUrl) {
         setDownloadBusy(true);
         try {
-          const name = await downloadFromUrl(result.downloadUrl, `projectpack-export.${format}`);
+          const name = await downloadFromUrl(apiUrl(result.downloadUrl), `projectpack-export.${format}`);
           notify('success', 'Download complete', `${name} — ${result.fileCount} file${result.fileCount === 1 ? '' : 's'}`);
         } catch (e) {
           notify('error', 'Download failed', (e as Error).message);
