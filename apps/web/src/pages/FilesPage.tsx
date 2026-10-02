@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, apiUrl } from '../services/api';
 import type { FolderNode, FileRecord } from '@projectpack/shared';
 import { EmptyState, ErrorBanner, Skeleton, SkeletonRows } from '../components/ui';
 import { FileIcon } from '../components/ui';
@@ -133,7 +133,7 @@ function FolderRow({
     setDownloading(true);
     try {
       const name = await downloadFromUrl(
-        `/api/projects/${projectId}/folder/download?path=${encodeURIComponent(node.relativePath)}`,
+        apiUrl(`/api/projects/${projectId}/folder/download?path=${encodeURIComponent(node.relativePath)}`),
         `${node.name}.zip`,
       );
       notify('success', 'Download complete', `${name} — everything under ${node.name}`);
@@ -148,7 +148,7 @@ function FolderRow({
   async function downloadFile(file: FileRecord) {
     try {
       const name = await downloadFromUrl(
-        `/api/projects/${projectId}/files/${file.id}/raw?download=1`,
+        apiUrl(`/api/projects/${projectId}/files/${file.id}/raw?download=1`),
         file.name,
       );
       notify('success', 'Download complete', name);
