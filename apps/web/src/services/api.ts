@@ -11,7 +11,13 @@ import type {
   ImageInfo,
 } from '@projectpack/shared';
 
-const BASE = '/api';
+const API_ORIGIN = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const BASE = API_ORIGIN ? API_ORIGIN + '/api' : '/api';
+
+export function apiUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  return API_ORIGIN ? API_ORIGIN + (url.startsWith('/') ? url : '/' + url) : url;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -108,7 +114,7 @@ export const api = {
     request<ContentResponse>(`/projects/${id}/files/${fileId}/content`),
 
   getArchiveListing: (id: string, fileId: string) =>
-    fetch(`/api/projects/${id}/files/${fileId}/archive`).then((r) => r.json()),
+    fetch(apiUrl(`/api/projects/${id}/files/${fileId}/archive`)).then((r) => r.json()),
 
   search: (id: string, q: string, content: boolean) =>
     request<{ query: string; hits: SearchHit[]; total: number }>(
@@ -174,9 +180,9 @@ export const api = {
   listImages: (id: string) =>
     request<{ images: ImageInfo[]; total: number }>(`/projects/${id}/images`),
 
-  rawFileUrl: (id: string, fileId: string) => `/api/projects/${id}/files/${fileId}/raw`,
+  rawFileUrl: (id: string, fileId: string) => apiUrl(`/api/projects/${id}/files/${fileId}/raw`),
 
-  imagesZipUrl: (id: string) => `/api/projects/${id}/images/export`,
+  imagesZipUrl: (id: string) => apiUrl(`/api/projects/${id}/images/export`),
 };
 
 export interface PackageOptions {
