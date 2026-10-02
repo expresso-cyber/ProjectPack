@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, apiUrl } from '../services/api';
 import type { PackageOptions } from '../services/api';
 import type { PackageManifest, PackagePreview, PackagePreviewPlanEntry } from '@projectpack/shared';
 import { EmptyState, ErrorBanner, Spinner, StatCard } from '../components/ui';
