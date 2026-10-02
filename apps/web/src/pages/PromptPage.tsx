@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api, promptApi, aiApi } from '../services/api';
+import { api, apiUrl, promptApi, aiApi } from '../services/api';
 import type { ImageInfo } from '@projectpack/shared';
 import { ErrorBanner, Skeleton } from '../components/ui';
 import { ProjectBreadcrumbs } from '../components/Breadcrumbs';
@@ -90,7 +90,7 @@ export default function PromptPage() {
   async function downloadImage(image: ImageInfo) {
     setDownloading(image.fileId);
     try {
-      const name = await downloadFromUrl(image.downloadUrl, image.name);
+      const name = await downloadFromUrl(apiUrl(image.downloadUrl), image.name);
       notify('success', 'Download complete', name);
     } catch (e) {
       notify('error', 'Image download failed', (e as Error).message);
