@@ -141,7 +141,7 @@ export default function PackagePage() {
     setDownloading(pkg.packageId);
     try {
       const name = await downloadFromUrl(
-        `/api/projects/${projectId}/package/${pkg.packageId}/download`,
+        apiUrl(`/api/projects/${projectId}/package/${pkg.packageId}/download`),
         `${pkg.packageId}.zip`,
       );
       notify('success', 'Download complete', `${name} — ${pkg.fileCount} files`);
@@ -361,7 +361,7 @@ export default function PackagePage() {
                 </span>
                 <div className="ml-auto flex gap-2">
                   <a
-                    href={`/api/projects/${projectId}/package/${pkg.packageId}/manifest`}
+                    href={apiUrl(`/api/projects/${projectId}/package/${pkg.packageId}/manifest`)}
                     target="_blank"
                     rel="noreferrer"
                     className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
