@@ -7,12 +7,12 @@ import { store, type ProjectDoc } from '../services/store.js';
 import { runEngine } from '../services/pythonBridge.js';
 import { startScan, getTree, startDuplicates } from '../services/scanService.js';
 import { startExtraction, getContent } from '../services/extractService.js';
-import { search } from '../services/searchService.js';
+import { search, suggest } from '../services/searchService.js';
 import { buildPreview, createPackage, DEFAULT_PACKAGE_OPTIONS } from '../services/packageService.js';
 import { getReport, createExport, getExportFile } from '../services/reportService.js';
 import { analyzeRepository, repositoryTree } from '../services/githubService.js';
 import { buildProjectPrompt, DEFAULT_PROMPT_OPTIONS } from '../services/promptService.js';
-import { analyzeWebsite } from '../services/websiteService.js';
+import { analyzeWebsite, listSitePages } from '../services/websiteService.js';
 import { listImages, streamImagesZip, rawFilePath, contentTypeFor } from '../services/imageService.js';
 import { aiStatus, enhancePromptWithAi } from '../services/aiService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -302,6 +302,16 @@ router.get(
   }),
 );
 
+/** Autocomplete for the search box: file suggestions as you type. */
+router.get(
+  '/projects/:projectId/search/suggest',
+  asyncHandler(async (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = Math.min(Number(req.query.limit ?? 8) || 8, 20);
+    res.json({ query: q, suggestions: suggest(req.params.projectId, q, limit) });
+  }),
+);
+
 // ---- Duplicates ----
 
 router.post(
@@ -482,10 +492,21 @@ router.post(
       .object({
         url: z.string().min(8),
         name: z.string().min(1).max(200).optional(),
+        // selective import: only these pages are fetched (assets included)
+        pages: z.array(z.string().min(4).max(2000)).max(200).optional(),
       })
       .parse(req.body);
-    const { projectId, job } = await analyzeWebsite(body.url, body.name);
+    const { projectId, job } = await analyzeWebsite(body.url, body.name, { pages: body.pages });
     res.status(202).json({ projectId, jobId: job.id, job });
+  }),
+);
+
+/** Page links found on a site's landing page — powers the page picker. */
+router.post(
+  '/website/pages',
+  asyncHandler(async (req, res) => {
+    const body = z.object({ url: z.string().min(8) }).parse(req.body);
+    res.json({ pages: await listSitePages(body.url) });
   }),
 );
 

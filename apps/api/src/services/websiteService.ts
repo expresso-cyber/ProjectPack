@@ -368,6 +368,7 @@ async function crawl(
   seed: URL,
   dest: string,
   report: (completed: number, total: number) => void,
+  opts: { pages?: URL[] } = {},
 ): Promise<{ stats: CrawlStats; assets: WebsiteAssetInfo[] }> {
   const startHost = bareHost(seed.hostname);
   const seen = new Set<string>();
@@ -397,7 +398,14 @@ async function crawl(
     alt?: string;
     depth: number;
   }
-  const queue: QueueItem[] = [{ url: seed, kind: 'page', depth: 0 }];
+  // Selective mode: when the user picked specific pages, ONLY those are
+  // fetched (their assets included) and no further pages are discovered —
+  // e.g. a student told to build just 4 pages of a site.
+  const allowedPages =
+    opts.pages && opts.pages.length > 0 ? new Set(opts.pages.map((u) => normalizeKey(u))) : null;
+  const queue: QueueItem[] = allowedPages
+    ? (opts.pages as URL[]).map((url) => ({ url, kind: 'page' as const, depth: 0 }))
+    : [{ url: seed, kind: 'page', depth: 0 }];
 
   const recordProgress = () => report(Math.min(stats.pages + stats.assets, budget), budget);
 
@@ -479,13 +487,21 @@ async function crawl(
     if (seen.has(key)) return;
     if (robotsBlocks(item.url)) return;
 
-    if (item.kind === 'page' && isPageCandidate(item.url, startHost, true) && stats.pages < env.websiteMaxPages) {
+    if (
+      item.kind === 'page' &&
+      (!allowedPages || allowedPages.has(key)) &&
+      isPageCandidate(item.url, startHost, true) &&
+      stats.pages < env.websiteMaxPages
+    ) {
       seen.add(key);
       stats.pages += 1;
       const result = await fetchAndSave(item.url);
       if (result?.html) {
         const refs = parseHtmlRefs(result.html, item.url);
-        for (const page of refs.pages) queue.push({ url: page, kind: 'page', depth: 0 });
+        // In selective mode links are not followed — only assets are collected.
+        if (!allowedPages) {
+          for (const page of refs.pages) queue.push({ url: page, kind: 'page', depth: 0 });
+        }
         for (const asset of refs.assets) {
           if (saved.has(normalizeKey(asset.url)) || seen.has(normalizeKey(asset.url))) continue;
           if (isAssetCandidate(asset.url) && stats.assets < env.websiteMaxAssets) {
@@ -529,8 +545,7 @@ async function crawl(
   return { stats, assets: assetInfos };
 }
 
-/** Import + scan a live website into a new project (same pipeline as GitHub). */
-export async function analyzeWebsite(rawUrl: string, name?: string): Promise<{ projectId: string; job: JobRecord }> {
+function parseSeedUrl(rawUrl: string): URL {
   let seed: URL;
   try {
     seed = new URL(rawUrl.trim());
@@ -542,6 +557,66 @@ export async function analyzeWebsite(rawUrl: string, name?: string): Promise<{ p
   }
   if (!seed.hostname) {
     throw new AppError('WEBSITE_ERROR', 'The URL has no hostname', 400);
+  }
+  return seed;
+}
+
+/**
+ * The page links found on a site's landing page — powers the "crawl only these
+ * pages" picker so a user can import 4 specific pages instead of a whole site.
+ * The landing page itself is returned first.
+ */
+export async function listSitePages(rawUrl: string): Promise<string[]> {
+  const seed = parseSeedUrl(rawUrl);
+  let res: Response;
+  try {
+    res = await politeFetch(seed);
+  } catch {
+    throw new AppError('WEBSITE_ERROR', `Could not open ${seed.origin} — the site may be down or blocking automated access`, 502);
+  }
+  if (!res.ok) {
+    throw new AppError('WEBSITE_ERROR', `Could not open ${seed.origin} (HTTP ${res.status})`, 502);
+  }
+  const html = await res.text();
+  const { pages } = parseHtmlRefs(html, seed);
+  const startHost = bareHost(seed.hostname);
+  // never offer a page the site's robots.txt disallows
+  const disallowPrefixes = await fetchRobots(seed);
+  const blocked = (url: URL) =>
+    disallowPrefixes.some((prefix) => prefix !== '' && url.pathname.startsWith(prefix));
+  const seen = new Set<string>();
+  const out: string[] = [seed.toString()];
+  seen.add(normalizeKey(seed));
+  for (const page of pages) {
+    if (!isPageCandidate(page, startHost, true) || blocked(page)) continue;
+    const key = normalizeKey(page);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(page.toString());
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
+/** Import + scan a live website into a new project (same pipeline as GitHub). */
+export async function analyzeWebsite(
+  rawUrl: string,
+  name?: string,
+  options: { pages?: string[] } = {},
+): Promise<{ projectId: string; job: JobRecord }> {
+  const seed = parseSeedUrl(rawUrl);
+
+  // Optional explicit page list (selective import).
+  const selectedPages: URL[] = [];
+  for (const raw of options.pages ?? []) {
+    try {
+      const candidate = new URL(raw.trim());
+      if ((candidate.protocol === 'http:' || candidate.protocol === 'https:') && candidate.hostname) {
+        selectedPages.push(candidate);
+      }
+    } catch {
+      /* ignore malformed entries rather than failing the whole import */
+    }
   }
 
   const project = store.createProject({
@@ -561,11 +636,18 @@ export async function analyzeWebsite(rawUrl: string, name?: string): Promise<{ p
       void total;
       report(Math.min(Math.round(completed * 0.7), Math.round(budget * 0.7)), budget);
     };
-    const { stats, assets } = await crawl(seed, dest, crawlReport);
+    const { stats, assets } = await crawl(
+      seed,
+      dest,
+      crawlReport,
+      selectedPages.length > 0 ? { pages: selectedPages } : {},
+    );
     if (stats.pages === 0 && stats.assets === 0) {
       throw new AppError(
         'WEBSITE_ERROR',
-        `Could not fetch anything from ${seed.origin} — the site may be down, blocking bots, or behind authentication`,
+        selectedPages.length > 0
+          ? `Could not fetch any of the ${selectedPages.length} selected page(s) — check the links, or try the whole-site crawl`
+          : `Could not fetch anything from ${seed.origin} — the site may be down, blocking bots, or behind authentication`,
         502,
       );
     }

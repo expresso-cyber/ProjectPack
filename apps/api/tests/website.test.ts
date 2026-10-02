@@ -246,6 +246,35 @@ describe('website import pipeline', () => {
     expect(res.body.fileCount).toBeGreaterThan(0);
   });
 
+  it('lists the page links found on the landing page (for the page picker)', async () => {
+    const res = await request(app).post('/api/website/pages').send({ url: baseUrl });
+    expect(res.status).toBe(200);
+    const pages: string[] = res.body.pages;
+    // the landing page itself comes first, so it can be selected too
+    expect(pages[0]).toBe(`${baseUrl}/`);
+    expect(pages.some((p) => p.endsWith('/about.html'))).toBe(true);
+    // robots-disallowed pages are never offered
+    expect(pages.some((p) => p.includes('/private/'))).toBe(false);
+  });
+
+  it('imports ONLY the selected pages, with their assets', async () => {
+    const res = await request(app)
+      .post('/api/website/analyze')
+      .send({ url: baseUrl, name: 'Selected pages only', pages: [`${baseUrl}/about.html`] });
+    expect(res.status).toBe(202);
+    const finished = await waitForJob(app, res.body.jobId);
+    expect(finished.status).toBe('completed');
+
+    const files = await request(app).get(`/api/projects/${res.body.projectId}/files`);
+    const paths: string[] = files.body.files.map((f: { relativePath: string }) => f.relativePath);
+    // the chosen page is there…
+    expect(paths.some((p) => p.endsWith('about.html'))).toBe(true);
+    // …and nothing was discovered by following links (no landing page, no assets)
+    expect(paths.some((p) => p.endsWith('index.html'))).toBe(false);
+    expect(paths.some((p) => p.endsWith('.png'))).toBe(false);
+    expect(paths).toHaveLength(1);
+  });
+
   it('reports AI status and refuses enhancement when unconfigured', async () => {
     const status = await request(app).get('/api/ai/status');
     expect(status.status).toBe(200);

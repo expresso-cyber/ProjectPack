@@ -39,6 +39,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface SearchSuggestion {
+  fileId: string;
+  relativePath: string;
+  name: string;
+  extension: string;
+  matchedIn: 'name' | 'path' | 'content';
+  snippet?: string;
+  matches: number;
+}
+
 export interface ProjectDetail extends ProjectSummary {
   fileCount: number;
   folderCount: number;
@@ -142,11 +152,24 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
-  analyzeWebsite: (url: string, name?: string) =>
+  analyzeWebsite: (url: string, name?: string, pages?: string[]) =>
     request<{ projectId: string; jobId: string }>('/website/analyze', {
       method: 'POST',
-      body: JSON.stringify({ url, name }),
+      body: JSON.stringify({ url, name, pages }),
     }),
+
+  /** Sub-page links found on a site's landing page (for the page picker). */
+  listSitePages: (url: string) =>
+    request<{ pages: string[] }>('/website/pages', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+
+  /** Autocomplete suggestions for the search box. */
+  searchSuggest: (id: string, q: string, limit = 8) =>
+    request<{ query: string; suggestions: SearchSuggestion[] }>(
+      `/projects/${id}/search/suggest?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
 
   listImages: (id: string) =>
     request<{ images: ImageInfo[]; total: number }>(`/projects/${id}/images`),

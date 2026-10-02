@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.4 — Page picker, search autocomplete, back-button fix
+
+Built on the version you are running (0.5.3).
+
+- **Fixed: the workspace looked stuck after an import.** When the import
+  finished the app navigated away with its "importing" state still set, so
+  pressing Back restored that frozen snapshot (progress bar full, buttons
+  disabled) until a reload. The import state is now cleared before navigating,
+  and a `pageshow` guard resets stale in-flight state whenever the page is
+  restored from the browser's back/forward cache (the project page has the same
+  guard for its job bar).
+- **New: pick specific pages to crawl.** In the "Live website" card, enter the
+  main URL and click **Load page links** — the site's own page links are listed
+  (robots-disallowed ones excluded, the landing page first). Type to filter with
+  autocomplete and click to add them as chips. If you select pages, ONLY those
+  pages are fetched (plus the images/CSS/scripts they use) and no links are
+  followed — ideal when you only need a handful of pages of a site. Leave the
+  list empty for the usual whole-site crawl (up to 30 pages).
+  - API: `POST /api/website/pages { url }` → `{ pages: string[] }`, and
+    `POST /api/website/analyze` accepts an optional `pages: string[]`.
+- **New: search autocomplete.** The search box now suggests files as you type
+  (debounced, names and paths first, then extracted content) with the matching
+  snippet and where it matched; clicking a suggestion opens that file. New
+  endpoint: `GET /api/projects/:id/search/suggest?q=`.
+
 ## 0.5.3 — CI: build shared before typecheck
 
 - The GitHub Actions workflow now runs "npm run build -w @projectpack/shared"

@@ -115,6 +115,28 @@ describe('scan → files → extract → search → duplicates → report', () =
     expect(res.body.extensionBreakdown.length).toBeGreaterThan(0);
   });
 
+  it('suggests files as the user types (autocomplete)', async () => {
+    const res = await request(app).get(`/api/projects/${projectId}/search/suggest`).query({ q: 'config' });
+    expect(res.status).toBe(200);
+    const first = res.body.suggestions[0];
+    expect(first.relativePath).toContain('config.json');
+    expect(first.fileId).toBeTruthy();
+    expect(['name', 'path', 'content']).toContain(first.matchedIn);
+  });
+
+  it('suggests content matches from extracted text, with a snippet', async () => {
+    const res = await request(app).get(`/api/projects/${projectId}/search/suggest`).query({ q: 'markdown' });
+    expect(res.status).toBe(200);
+    const hit = res.body.suggestions.find((s: { relativePath: string }) => s.relativePath.endsWith('README.md'));
+    expect(hit).toBeTruthy();
+    expect(hit.snippet).toBeTruthy();
+  });
+
+  it('returns no suggestions for a blank query', async () => {
+    const res = await request(app).get(`/api/projects/${projectId}/search/suggest`).query({ q: '   ' });
+    expect(res.body.suggestions).toEqual([]);
+  });
+
   it('exports combined markdown', async () => {
     const res = await request(app).post(`/api/projects/${projectId}/export`).send({ format: 'md' });
     expect(res.status).toBe(201);

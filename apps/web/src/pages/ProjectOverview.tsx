@@ -58,6 +58,17 @@ export default function ProjectOverview() {
 
   useEffect(refresh, [refresh]);
 
+  // Back/Forward cache restore: drop a stale in-flight job bar and re-read state.
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setActiveJob(null);
+      refresh();
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, [refresh]);
+
   // While a scan (e.g. the tail end of a website import) is running, keep the
   // page live instead of showing stale zeros until a manual reload.
   const scanning = project?.status === 'scanning';

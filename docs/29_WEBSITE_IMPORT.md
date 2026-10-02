@@ -129,3 +129,32 @@ the finished prompt is sent to the provider.
 CSS, a robots.txt-disallowed page) and asserts the full journey: crawl →
 scan → images listing (alt text, source URLs) → raw bytes → images ZIP →
 extraction-enriched dimensions → prompt with image manifest → AI status.
+
+## Selecting specific pages (v0.5.4)
+
+Crawling a whole site is not always what you want — e.g. when only four pages
+of a site are needed. The import card therefore offers a page picker:
+
+1. Enter the main URL and click **Load page links** — this calls
+   `POST /api/website/pages { url }`, which fetches the landing page once and
+   returns the same-host page links found on it (the landing page itself first;
+   robots.txt-disallowed links are excluded).
+2. Type to filter the list (autocomplete) and click a link to add it as a chip.
+3. Press **Crawl and analyze**. With pages selected, the crawler fetches **only**
+   those pages — no link following — while still downloading the images, CSS
+   and scripts those pages reference, so the clone actually renders.
+
+Leave the list empty for the normal whole-site crawl (bounded by
+`WEBSITE_MAX_PAGES` / `WEBSITE_MAX_ASSETS`).
+
+API: `POST /api/website/analyze` accepts an optional
+`pages: string[]` alongside `url` and `name`.
+
+## Search suggestions
+
+`GET /api/projects/:id/search/suggest?q=&limit=` returns up to `limit`
+(≤20) suggestions for the search box: names and paths first, then content
+matches from stored previews/extracted text, each with the matched field and a
+snippet. The UI debounces typing (250 ms) and opens the file when a suggestion
+is clicked.
+

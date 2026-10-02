@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 import type { ProjectSummary, JobRecord } from '@projectpack/shared';
@@ -16,6 +16,12 @@ export default function Home() {
   const [githubUrl, setGithubUrl] = useState('');
   const [websiteUrl, setWebsiteUrl] = useState('');
   const [websiteName, setWebsiteName] = useState('');
+  // selective website import: pick specific pages instead of crawling everything
+  const [sitePages, setSitePages] = useState<string[]>([]);
+  const [selectedPages, setSelectedPages] = useState<string[]>([]);
+  const [pageQuery, setPageQuery] = useState('');
+  const [loadingPages, setLoadingPages] = useState(false);
+  const [showPageList, setShowPageList] = useState(false);
   const [busy, setBusy] = useState(false);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importProjectId, setImportProjectId] = useState('');
@@ -47,6 +53,19 @@ export default function Home() {
     }
   }
 
+  // Coming back with Back/Forward restores this page from the browser cache
+  // with its old state — clear anything mid-flight so nothing looks stuck.
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      setImportJobId(null);
+      setBusy(false);
+      void api.listProjects().then(setProjects).catch(() => undefined);
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => window.removeEventListener('pageshow', onPageShow);
+  }, []);
+
   const importJob = useJobProgress(importJobId, (job: JobRecord) => {
     if (job.status === 'completed') {
       const failedCount = ((job.result as { failures?: unknown[] } | null)?.failures ?? []).length;
@@ -63,6 +82,13 @@ export default function Home() {
           'Opening the project…',
         );
       }
+      // Clear the import UI state *before* navigating: pressing Back would
+      // otherwise restore this page from the browser cache with the bar still
+      // full and the buttons still disabled (the job is already finished, so
+      // nothing would ever reset it).
+      setImportJobId(null);
+      setBusy(false);
+      void api.listProjects().then(setProjects).catch(() => undefined);
       // brief pause so the toast is visible before navigating
       setTimeout(() => {
         window.location.href = `/projects/${importProjectId}`;
@@ -106,6 +132,39 @@ export default function Home() {
     }
   }
 
+  const pageMatches = useMemo(() => {
+    const needle = pageQuery.trim().toLowerCase();
+    const pool = sitePages.filter((url) => !selectedPages.includes(url));
+    const list = needle ? pool.filter((url) => url.toLowerCase().includes(needle)) : pool;
+    return list.slice(0, 8);
+  }, [pageQuery, sitePages, selectedPages]);
+
+  async function loadSitePages() {
+    if (!websiteUrl.trim()) {
+      notify('error', 'Enter the main URL first', 'Paste the site URL, then load its page links.');
+      return;
+    }
+    setLoadingPages(true);
+    try {
+      const { pages } = await api.listSitePages(websiteUrl.trim());
+      setSitePages(pages);
+      setShowPageList(true);
+      notify(
+        'success',
+        'Page links loaded',
+        pages.length > 0 ? `${pages.length} link(s) found — pick the pages you need.` : 'No page links found on that page.',
+      );
+    } catch (e) {
+      notify('error', 'Could not list pages', (e as Error).message);
+    } finally {
+      setLoadingPages(false);
+    }
+  }
+
+  function togglePage(url: string) {
+    setSelectedPages((prev) => (prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url]));
+  }
+
   async function importWebsite() {
     setBusy(true);
     setError('');
@@ -113,12 +172,16 @@ export default function Home() {
       const { projectId, jobId } = await api.analyzeWebsite(
         websiteUrl,
         websiteName.trim() || undefined,
+        selectedPages.length > 0 ? selectedPages : undefined,
       );
       setImportKind('website');
       setImportProjectId(projectId);
       setImportJobId(jobId);
       setWebsiteUrl('');
       setWebsiteName('');
+      setSitePages([]);
+      setSelectedPages([]);
+      setPageQuery('');
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -226,6 +289,90 @@ export default function Home() {
             onChange={(e) => setWebsiteName(e.target.value)}
             disabled={importing}
           />
+
+          <div className="mt-3 rounded-md border border-slate-200 bg-slate-50/50 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-slate-700">Pages to crawl (optional)</span>
+              <button
+                type="button"
+                onClick={() => void loadSitePages()}
+                disabled={importing || loadingPages}
+                className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+              >
+                {loadingPages ? 'Loading…' : 'Load page links'}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Leave empty to crawl the whole site (up to 30 pages). Pick specific pages to fetch only those — handy
+              when you only need a few pages of a site.
+            </p>
+            <div className="relative mt-2">
+              <input
+                className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs"
+                placeholder={sitePages.length ? 'Type to search the loaded page links…' : 'Load page links first'}
+                value={pageQuery}
+                onChange={(e) => {
+                  setPageQuery(e.target.value);
+                  setShowPageList(true);
+                }}
+                onFocus={() => setShowPageList(true)}
+                disabled={importing || sitePages.length === 0}
+              />
+              {showPageList && pageMatches.length > 0 && (
+                <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                  {pageMatches.map((url) => (
+                    <li key={url}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          togglePage(url);
+                          setPageQuery('');
+                        }}
+                        className="block w-full truncate px-2 py-1.5 text-left font-mono text-[11px] text-slate-700 transition hover:bg-indigo-50"
+                        title={url}
+                      >
+                        {url}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            {selectedPages.length > 0 && (
+              <>
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  {selectedPages.map((url) => (
+                    <span
+                      key={url}
+                      className="inline-flex max-w-full items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
+                    >
+                      <span className="truncate" title={url}>
+                        {url.replace(/^https?:\/\//, '')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => togglePage(url)}
+                        className="text-indigo-500 transition hover:text-indigo-800"
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPages([])}
+                    className="text-[11px] text-slate-400 underline"
+                  >
+                    clear all
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-emerald-700">
+                  Only these {selectedPages.length} page(s) will be fetched — plus the images, CSS and scripts they use.
+                </p>
+              </>
+            )}
+          </div>
           <button
             className="mt-3 w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
             disabled={busy || importing}
