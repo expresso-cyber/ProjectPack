@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../services/api';
+import { api, apiUrl } from '../services/api';
 import type { ContentResponse } from '@projectpack/shared';
 import { ErrorBanner, FileIcon, Skeleton } from '../components/ui';
 import { ProjectBreadcrumbs } from '../components/Breadcrumbs';
@@ -24,7 +24,7 @@ export default function ContentPage() {
         setContent(c);
         if (c.relativePath.toLowerCase().endsWith('.zip')) {
           try {
-            const listing = await fetch(`/api/projects/${projectId}/files/${fileId}/archive`).then((r) => r.json());
+            const listing = await fetch(apiUrl(`/api/projects/${projectId}/files/${fileId}/archive`)).then((r) => r.json());
             if (listing.ok) setArchive(listing);
           } catch {
             /* archive listing is best-effort */
